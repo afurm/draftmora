@@ -1,6 +1,6 @@
 # Draftmora
 
-![Draftmora logo](public/draftmora-logo.png)
+![Draftmora app preview](https://raw.githubusercontent.com/afurm/draftmora/main/public/draftmora-preview.png)
 
 Messy ideas in. Clear tasks out.
 

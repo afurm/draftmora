@@ -1,7 +1,7 @@
 {
   "name": "draftmora",
   "version": "0.1.0",
-  "description": "Local-first task board for turning rough ideas into clear next steps.",
+  "description": "Local-first AI agent board with chat, SQLite storage, and OpenAI account auth.",
   "private": false,
   "license": "MIT",
   "homepage": "https://github.com/afurm/draftmora#readme",
@@ -31,13 +31,17 @@
     "access": "public"
   },
   "keywords": [
+    "ai",
     "ai-agent",
+    "agent-board",
+    "agent-chat",
     "openai",
+    "openai-auth",
     "task-board",
     "local-first",
+    "sqlite",
     "productivity",
-    "task-management",
-    "vite"
+    "task-management"
   ],
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch src/server/index.ts\" \"vite --host 0.0.0.0\"",

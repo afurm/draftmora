@@ -4,19 +4,22 @@
 
 Messy ideas in. Clear tasks out.
 
-Draftmora is a local-first task board for turning rough work into clear next
-steps. Capture a draft, add task context, and move work through a focused board
-without sending project data to a hosted task service.
+Draftmora is a local-first AI agent board for turning rough work into clear
+next steps. Capture a draft, add task context, chat with the agent, and move
+work through a focused board without sending project data to a hosted task
+service.
 
 The app runs on your machine, stores board data in SQLite, and can use OpenAI
-through account auth or a local API key when a task needs execution help.
+through account auth or a local API key when a task needs execution help. With
+account auth, eligible OpenAI accounts can connect from Settings instead of
+pasting an API key.
 
 ## Features
 
-- Local-first board with SQLite storage.
+- Local-first AI agent board with SQLite storage.
 - Task status, priority, focus area, tags, and execution history.
 - OpenAI account auth through the app settings, with API-key fallback.
-- Assistant chat with task proposals and explicit memory writes.
+- Agent chat with task proposals and explicit memory writes.
 - Durable local memory files: USER.md and MEMORY.md.
 - React, Vite, TypeScript, Fastify, shadcn/Radix UI, and Vitest.
 
@@ -24,8 +27,8 @@ through account auth or a local API key when a task needs execution help.
 
 - Node.js 22.14 or newer.
 - npm 11 or newer.
-- Optional: an OpenAI account connection or `OPENAI_API_KEY` for AI-backed task
-  execution.
+- Optional: an OpenAI account connection for supported account-auth models, or
+  `OPENAI_API_KEY` for API-key backed task execution.
 
 ## Quick Start
 
@@ -66,9 +69,9 @@ OPENAI_API_KEY=
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
-Open Settings in the app to connect an OpenAI account or save an API key
-locally. API keys, OAuth tokens, SQLite databases, build output, and dependency
-folders should not be committed.
+Open Settings in the app to connect an eligible OpenAI account/subscription or
+save an API key locally. API keys, OAuth tokens, SQLite databases, build output,
+and dependency folders should not be committed.
 
 ## Checks
 

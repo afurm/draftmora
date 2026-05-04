@@ -1,0 +1,170 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { BoardStore } from "./db";
+
+const tempDirs: string[] = [];
+
+function createStore() {
+  const dir = mkdtempSync(path.join(tmpdir(), "local-board-"));
+  tempDirs.push(dir);
+  return new BoardStore(path.join(dir, "board.db"));
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  }
+});
+
+describe("BoardStore", () => {
+  it("starts a new board without seeded tasks", () => {
+    const store = createStore();
+    expect(store.listTasks()).toEqual([]);
+    store.close();
+  });
+
+  it("creates, updates, moves, and deletes tasks", () => {
+    const store = createStore();
+    const workArea = store
+      .getSettings()
+      .userProfile.focusAreas.find((area) => area.id === "work");
+    const task = store.createTask({
+      title: "Ship local board",
+      priority: "high",
+      focusAreaId: workArea?.id,
+      tags: ["feature"],
+    });
+
+    expect(task.status).toBe("draft");
+    expect(task.focusAreaId).toBe(workArea?.id);
+    expect(store.listTasks().some((entry) => entry.id === task.id)).toBe(true);
+
+    const moved = store.updateTask(task.id, { status: "in_progress", focusAreaId: null });
+    expect(moved?.status).toBe("in_progress");
+    expect(moved?.focusAreaId).toBeNull();
+
+    expect(store.deleteTask(task.id)).toBe(true);
+    expect(store.getTask(task.id)).toBeNull();
+    store.close();
+  });
+
+  it("moves tasks with failed latest executions into needs attention on reopen", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "local-board-failed-"));
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, "board.db");
+    const store = new BoardStore(dbPath);
+    const task = store.createTask({
+      title: "Failed agent work",
+      status: "in_progress",
+    });
+    store.createTaskExecution({
+      taskId: task.id,
+      provider: "openai",
+      status: "failed",
+      progressSummary: "Work needs attention.",
+      error: "Command failed.",
+    });
+    store.close();
+
+    const reopened = new BoardStore(dbPath);
+    expect(reopened.getTask(task.id)?.status).toBe("needs_attention");
+    expect(reopened.getTask(task.id)?.execution?.output).toContain("Failure handoff");
+    expect(reopened.getTask(task.id)?.execution?.output).toContain("Move the task back to In Progress");
+    reopened.close();
+  });
+
+  it("persists configurable focus areas in settings", () => {
+    const store = createStore();
+
+    const settings = store.patchSettings({
+      userProfile: {
+        workAreas: ["Client"],
+        focusAreas: [{ id: "client", label: "Client", color: "rose" }],
+      },
+    });
+
+    expect(settings.userProfile.workAreas).toEqual(["Client"]);
+    expect(settings.userProfile.focusAreas).toEqual([
+      { id: "client", label: "Client", color: "rose" },
+    ]);
+    store.close();
+  });
+
+  it("ignores focus areas that are not in settings", () => {
+    const store = createStore();
+    const task = store.createTask({
+      title: "Unknown focus area",
+      focusAreaId: "does-not-exist",
+    });
+
+    expect(task.focusAreaId).toBeNull();
+    store.close();
+  });
+
+  it("persists assistant chat messages", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "local-board-chat-"));
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, "board.db");
+    const store = new BoardStore(dbPath);
+    const conversation = store.createAssistantChatConversation({ title: "Planning" });
+
+    const user = store.appendAssistantChatMessage({
+      conversationId: conversation.id,
+      role: "user",
+      content: "What should I do next?",
+    });
+    const assistant = store.appendAssistantChatMessage({
+      conversationId: conversation.id,
+      role: "assistant",
+      content: "Start with the ready task.",
+    });
+    store.close();
+
+    const reopened = new BoardStore(dbPath);
+    expect(reopened.listAssistantChatConversations()).toMatchObject([
+      { id: conversation.id, title: "Planning" },
+    ]);
+    expect(reopened.listAssistantChatMessages(conversation.id)).toMatchObject([
+      {
+        id: user.id,
+        conversationId: conversation.id,
+        role: "user",
+        content: "What should I do next?",
+      },
+      {
+        id: assistant.id,
+        conversationId: conversation.id,
+        role: "assistant",
+        content: "Start with the ready task.",
+      },
+    ]);
+    reopened.close();
+  });
+
+  it("keeps assistant chat histories scoped to their conversation", () => {
+    const store = createStore();
+    const planning = store.createAssistantChatConversation({ title: "Planning" });
+    const writing = store.createAssistantChatConversation({ title: "Writing" });
+
+    store.appendAssistantChatMessage({
+      conversationId: planning.id,
+      role: "user",
+      content: "Plan my day",
+    });
+    store.appendAssistantChatMessage({
+      conversationId: writing.id,
+      role: "user",
+      content: "Draft the launch note",
+    });
+
+    expect(store.listAssistantChatMessages(planning.id)).toMatchObject([
+      { conversationId: planning.id, content: "Plan my day" },
+    ]);
+    expect(store.listAssistantChatMessages(writing.id)).toMatchObject([
+      { conversationId: writing.id, content: "Draft the launch note" },
+    ]);
+    store.close();
+  });
+});

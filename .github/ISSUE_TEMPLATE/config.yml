@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing Guide
+    url: https://github.com/afurm/draftmora/blob/main/CONTRIBUTING.md
+    about: Read this before opening a pull request.
+  - name: Security Policy
+    url: https://github.com/afurm/draftmora/blob/main/SECURITY.md
+    about: Report vulnerabilities privately instead of opening public issues.

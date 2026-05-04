@@ -1,0 +1,91 @@
+{
+  "name": "draftmora",
+  "version": "0.1.0",
+  "description": "Local-first task board for turning rough ideas into clear next steps.",
+  "private": false,
+  "license": "MIT",
+  "homepage": "https://github.com/afurm/draftmora#readme",
+  "bugs": {
+    "url": "https://github.com/afurm/draftmora/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/afurm/draftmora.git"
+  },
+  "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "type": "module",
+  "bin": {
+    "draftmora": "./bin/draftmora.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "ai-agent",
+    "openai",
+    "task-board",
+    "local-first",
+    "productivity",
+    "task-management",
+    "vite"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch src/server/index.ts\" \"vite --host 0.0.0.0\"",
+    "server": "tsx watch src/server/index.ts",
+    "start": "node dist/server/index.js",
+    "web": "vite --host 0.0.0.0",
+    "clean": "node scripts/clean-dist.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run clean && npm run typecheck && npm run build:web && npm run build:server",
+    "build:web": "vite build --outDir dist/client",
+    "build:server": "vite build --config vite.server.config.ts",
+    "test": "vitest run",
+    "preview": "vite preview --host 0.0.0.0 --outDir dist/client",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/static": "^9.1.3",
+    "@mariozechner/pi-ai": "^0.72.1",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "typebox": "^1.1.37",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@fontsource-variable/geist": "^5.2.8",
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.4",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "concurrently": "^9.1.2",
+    "jsdom": "^25.0.1",
+    "lucide-react": "^1.14.0",
+    "radix-ui": "^1.4.3",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shadcn": "^4.6.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.4",
+    "tsx": "^4.19.2",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.5"
+  }
+}

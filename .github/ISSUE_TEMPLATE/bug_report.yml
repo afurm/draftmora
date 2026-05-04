@@ -1,0 +1,86 @@
+name: Bug report
+description: Report a crash, regression, data issue, or incorrect behavior.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep the report concise, reproducible, and grounded in observed behavior.
+        Do not include API keys, OAuth tokens, database files, or private memory content.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence describing what is broken.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Provide the shortest reliable repro path.
+      placeholder: |
+        1. Run `npm run dev`
+        2. Open Settings
+        3. Click ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - Board
+        - Tasks
+        - Settings
+        - OpenAI auth
+        - Assistant chat
+        - Memory
+        - API server
+        - Build or tests
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15 / Ubuntu 24.04 / Windows 11 WSL2
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: v22.14.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste redacted output only. Do not include secrets.
+      render: shell

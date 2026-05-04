@@ -1,0 +1,11 @@
+node_modules
+dist
+data
+.env
+.DS_Store
+*.log
+.playwright-cli
+coverage
+.vite
+.vitest
+.npm

@@ -1,20 +1,36 @@
 # Draftmora
 
+[![CI](https://github.com/afurm/draftmora/actions/workflows/ci.yml/badge.svg)](https://github.com/afurm/draftmora/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111111.svg)](LICENSE)
+![Node.js >=22.14](https://img.shields.io/badge/node-%3E%3D22.14-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)
+![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)
+![OpenAI account auth](https://img.shields.io/badge/OpenAI-account%20auth-412991?logo=openai&logoColor=white)
+![Local-first](https://img.shields.io/badge/local--first-yes-111111)
+
 ![Draftmora app preview](https://raw.githubusercontent.com/afurm/draftmora/main/public/draftmora-preview.png)
 
-Messy ideas in. Clear tasks out.
+**Messy ideas in. Clear tasks out.**
 
-Draftmora is a local-first AI agent board for turning rough work into clear
-next steps. Capture a draft, add task context, chat with the agent, and move
-work through a focused board without sending project data to a hosted task
-service.
+Draftmora is a local-first AI agent board for people who want AI help inside
+their own task workflow, not another hosted project-management system. Capture
+rough notes, turn them into structured tasks, chat with the agent, and keep
+execution history next to the work.
 
 The app runs on your machine, stores board data in SQLite, and can use OpenAI
 through account auth or a local API key when a task needs execution help. With
 account auth, eligible OpenAI accounts can connect from Settings instead of
 pasting an API key.
 
-## Features
+## Why Draftmora
+
+- Start with messy notes and finish with a status-aware task board.
+- Use agent chat to propose task changes before anything is applied.
+- Keep project data local by default in SQLite and plain memory files.
+- Connect OpenAI from the app when account auth is available, or use an API key.
+- Prepared with a real npm CLI, Fastify API, React UI, and CI validation.
+
+## Highlights
 
 - Local-first AI agent board with SQLite storage.
 - Task status, priority, focus area, tags, and execution history.
@@ -22,6 +38,13 @@ pasting an API key.
 - Agent chat with task proposals and explicit memory writes.
 - Durable local memory files: USER.md and MEMORY.md.
 - React, Vite, TypeScript, Fastify, shadcn/Radix UI, and Vitest.
+
+## How It Works
+
+1. Capture rough work as a draft.
+2. Add priority, focus area, tags, and notes.
+3. Ask the agent to break down work, propose next tasks, or plan follow-ups.
+4. Approve proposed changes explicitly and track execution history on the board.
 
 ## Requirements
 
@@ -32,17 +55,11 @@ pasting an API key.
 
 ## Quick Start
 
-Run without installing:
+Run from a local checkout:
 
 ```bash
-npx draftmora
-```
-
-Then open `http://127.0.0.1:4141`.
-
-Or run from a local checkout:
-
-```bash
+git clone https://github.com/afurm/draftmora.git
+cd draftmora
 npm install
 npm run dev
 ```
@@ -51,6 +68,14 @@ Open `http://localhost:5173`.
 
 The API runs on `http://127.0.0.1:4141` by default. Local board data is stored
 in `./data/board.db`.
+
+After the npm package is published, users can run:
+
+```bash
+npx draftmora
+```
+
+Then open `http://127.0.0.1:4141`.
 
 ## Configuration
 
@@ -69,9 +94,15 @@ OPENAI_API_KEY=
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
-Open Settings in the app to connect an eligible OpenAI account/subscription or
-save an API key locally. API keys, OAuth tokens, SQLite databases, build output,
-and dependency folders should not be committed.
+Open Settings in the app to choose an auth mode:
+
+- OpenAI account auth: connect an eligible OpenAI account/subscription from the
+  app, without pasting an API key.
+- API-key mode: save a key locally or provide `OPENAI_API_KEY` through the
+  environment.
+
+API keys, OAuth tokens, SQLite databases, build output, and dependency folders
+should not be committed.
 
 ## Checks
 
@@ -87,16 +118,16 @@ npm pack --dry-run
 
 ## npm Package
 
-Draftmora publishes as a public npm package with a `draftmora` executable. The
-package includes the built Fastify server and Vite client assets.
+Draftmora is prepared for a public npm release with a `draftmora` executable.
+The package includes the built Fastify server and Vite client assets.
 
 ```bash
 npm install -g draftmora
 draftmora
 ```
 
-By default the package starts on `http://127.0.0.1:4141` and stores data in
-`./data/board.db` from the directory where the command is run. Set
+After publishing, the package starts on `http://127.0.0.1:4141` and stores data
+in `./data/board.db` from the directory where the command is run. Set
 `BOARD_DB_PATH` when you want a fixed database location.
 
 ## Security Model

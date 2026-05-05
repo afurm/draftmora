@@ -18,7 +18,8 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The API runs on `http://127.0.0.1:4141`.
+Open `http://localhost:5173`. The API runs on `http://127.0.0.1:4141` by
+default. Set `WEB_PORT` and `API_PORT` in `.env` to use another pair.
 
 ## Before Opening a PR
 

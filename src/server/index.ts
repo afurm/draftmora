@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import { buildServer } from "./routes";
 
-const port = Number(process.env.PORT ?? 4141);
-const host = process.env.HOST ?? "127.0.0.1";
+const port = readPort(["API_PORT", "PORT"], 4141);
+const host = process.env.API_HOST ?? process.env.HOST ?? "127.0.0.1";
+const webPort = readPort(["WEB_PORT"], 5173);
+const webHost = process.env.WEB_HOST ?? "localhost";
 const app = buildServer();
 const staticDir = resolveStaticDir();
 
@@ -39,9 +41,13 @@ if (staticDir) {
 
 try {
   await app.listen({ port, host });
-  console.log(`Draftmora running at http://${host}:${port}`);
+  console.log(
+    staticDir
+      ? `Draftmora running at http://${host}:${port}`
+      : `Draftmora API running at http://${host}:${port}`,
+  );
   if (!staticDir) {
-    console.log("Web app runs with Vite at http://localhost:5173");
+    console.log(`Web app runs with Vite at http://${displayHost(webHost)}:${webPort}`);
   }
 } catch (error) {
   app.log.error(error);
@@ -58,4 +64,23 @@ function resolveStaticDir(): string | null {
     path.resolve(moduleDir, "../client"),
   ].filter(Boolean) as string[];
   return candidates.find((candidate) => existsSync(path.join(candidate, "index.html"))) ?? null;
+}
+
+function readPort(names: string[], fallback: number) {
+  for (const name of names) {
+    const raw = process.env[name]?.trim();
+    if (!raw) {
+      continue;
+    }
+    const port = Number(raw);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+      return port;
+    }
+    throw new Error(`${name} must be a port number between 1 and 65535.`);
+  }
+  return fallback;
+}
+
+function displayHost(host: string) {
+  return host === "0.0.0.0" || host === "::" ? "localhost" : host;
 }

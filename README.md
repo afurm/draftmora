@@ -1,6 +1,7 @@
 # Draftmora
 
 [![CI](https://github.com/afurm/draftmora/actions/workflows/ci.yml/badge.svg)](https://github.com/afurm/draftmora/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/draftmora?color=CB3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/draftmora)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111111.svg)](LICENSE)
 ![Node.js >=22.14](https://img.shields.io/badge/node-%3E%3D22.14-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)
@@ -55,7 +56,15 @@ pasting an API key.
 
 ## Quick Start
 
-Run from a local checkout:
+Run from npm:
+
+```bash
+npx draftmora
+```
+
+Then open `http://127.0.0.1:4141`.
+
+Or run from a local checkout:
 
 ```bash
 git clone https://github.com/afurm/draftmora.git
@@ -68,14 +77,6 @@ Open `http://localhost:5173`.
 
 The API runs on `http://127.0.0.1:4141` by default. Local board data is stored
 in `./data/board.db`.
-
-After the npm package is published, users can run:
-
-```bash
-npx draftmora
-```
-
-Then open `http://127.0.0.1:4141`.
 
 ## Configuration
 
@@ -118,16 +119,23 @@ npm pack --dry-run
 
 ## npm Package
 
-Draftmora is prepared for a public npm release with a `draftmora` executable.
-The package includes the built Fastify server and Vite client assets.
+Draftmora is published on npm as
+[`draftmora`](https://www.npmjs.com/package/draftmora). The package includes
+the built Fastify server and Vite client assets.
+
+```bash
+npx draftmora
+```
+
+Or install it globally:
 
 ```bash
 npm install -g draftmora
 draftmora
 ```
 
-After publishing, the package starts on `http://127.0.0.1:4141` and stores data
-in `./data/board.db` from the directory where the command is run. Set
+The package starts on `http://127.0.0.1:4141` and stores data in
+`./data/board.db` from the directory where the command is run. Set
 `BOARD_DB_PATH` when you want a fixed database location.
 
 ## Security Model

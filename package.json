@@ -18,7 +18,7 @@
   },
   "type": "module",
   "bin": {
-    "draftmora": "./bin/draftmora.mjs"
+    "draftmora": "bin/draftmora.mjs"
   },
   "files": [
     "bin/",

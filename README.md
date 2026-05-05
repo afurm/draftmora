@@ -187,7 +187,13 @@ Draftmora uses a built-in local memory pattern:
 - `MEMORY.md` stores durable agent and project notes.
 - Entries are compact plain text separated with `§`.
 - There is no Memory page or dated memory log.
-- Explicit "remember" requests save directly to the correct file.
+- Chat turns run through an automatic durable-memory review; explicit
+  "remember" requests are high-confidence save candidates, but memory is
+  inferred from meaning rather than fixed wording.
+- Successful task executions also run the same fail-open memory review for
+  durable project notes.
+- Memory review uses the selected OpenAI model, so there is no separate memory
+  model setting to configure.
 
 ## Development Notes
 

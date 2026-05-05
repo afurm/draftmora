@@ -17,6 +17,7 @@ const tempDirs: string[] = [];
 class StubProviderRouter extends ProviderRouter {
   requests: CompletionRequest[] = [];
   toolRequests: ToolCompletionRequest[] = [];
+  memoryReviewResponses: string[] = [];
 
   constructor(store: BoardStore, private readonly toolCwd: string) {
     super(store);
@@ -25,6 +26,12 @@ class StubProviderRouter extends ProviderRouter {
   override async complete(request: CompletionRequest): Promise<CompletionResult> {
     this.requests.push(request);
     const prompt = request.messages.at(-1)?.content ?? "";
+    if (request.systemPrompt?.includes("durable memory reviewer")) {
+      return {
+        content: this.memoryReviewResponses.shift() ?? JSON.stringify({ entries: [] }),
+        raw: {} as CompletionResult["raw"],
+      };
+    }
     if (request.systemPrompt?.includes("right-side agent chat") && prompt.includes("Propose launch")) {
       return {
         content: [
@@ -105,6 +112,16 @@ class StubProviderRouter extends ProviderRouter {
           }),
           "```",
         ].join("\n"),
+        raw: {} as CompletionResult["raw"],
+      };
+    }
+    if (
+      request.systemPrompt?.includes("right-side agent chat") &&
+      request.systemPrompt.includes("The user's name is Andrii.") &&
+      prompt.toLowerCase().includes("what is my name")
+    ) {
+      return {
+        content: "Your name is Andrii.",
         raw: {} as CompletionResult["raw"],
       };
     }
@@ -329,6 +346,88 @@ describe("routes", () => {
         event.message.includes("read_file (marker.txt) completed"),
       ),
     ).toBe(true);
+    await app.close();
+    store.close();
+  });
+
+  it("runs memory review after successful task execution without promising unsaved memory", async () => {
+    const { app, store, dir, providerRouter } = createTestApp({
+      runTaskExecutionsInline: true,
+    });
+    providerRouter.memoryReviewResponses.push(
+      JSON.stringify({
+        entries: [
+          {
+            target: "memory",
+            content: "Draftmora successful task execution can save durable project facts.",
+          },
+        ],
+        remove: [],
+      }),
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Capture durable task result",
+        status: "in_progress",
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().task.status).toBe("done");
+    expect(providerRouter.toolRequests[0]?.systemPrompt).toContain(
+      "separate memory-review pass",
+    );
+    expect(providerRouter.toolRequests[0]?.systemPrompt).toContain(
+      "do not claim anything was saved",
+    );
+    expect(
+      providerRouter.requests.find((request) =>
+        request.systemPrompt?.includes("durable memory reviewer"),
+      )?.messages.at(-1)?.content,
+    ).toContain("completed Draftmora task execution");
+    expect(readFileSync(path.join(dir, "MEMORY.md"), "utf8")).toContain(
+      "successful task execution can save durable project facts",
+    );
+    await app.close();
+    store.close();
+  });
+
+  it("injects local memory files into task execution context", async () => {
+    const { app, store, dir, providerRouter } = createTestApp({
+      runTaskExecutionsInline: true,
+    });
+    writeFileSync(
+      path.join(dir, "USER.md"),
+      "The user wants task agents to use concise release summaries.",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(dir, "MEMORY.md"),
+      "Draftmora board tasks should reuse the release validation checklist.",
+      "utf8",
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Run release validation task",
+        status: "in_progress",
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().task.status).toBe("done");
+    expect(providerRouter.toolRequests[0]?.systemPrompt).toContain("<memory-context>");
+    expect(providerRouter.toolRequests[0]?.systemPrompt).toContain(
+      "concise release summaries",
+    );
+    expect(providerRouter.toolRequests[0]?.systemPrompt).toContain(
+      "release validation checklist",
+    );
     await app.close();
     store.close();
   });
@@ -621,6 +720,11 @@ describe("routes", () => {
 
   it("injects local memory files into assistant chat context", async () => {
     const { app, store, dir, providerRouter } = createTestApp();
+    store.createTask({
+      title: "Prepare remembered release checklist",
+      status: "ready",
+      priority: "high",
+    });
     writeFileSync(
       path.join(dir, "USER.md"),
       [
@@ -649,6 +753,9 @@ describe("routes", () => {
     });
 
     expect(response.statusCode).toBe(201);
+    expect(providerRouter.requests.at(-1)?.systemPrompt).toContain(
+      "Prepare remembered release checklist",
+    );
     expect(providerRouter.requests.at(-1)?.systemPrompt).toContain("workspace path from the task notes");
     expect(providerRouter.requests.at(-1)?.systemPrompt).toContain(
       "USER PROFILE (who the user is)",
@@ -661,8 +768,36 @@ describe("routes", () => {
     store.close();
   });
 
-  it("saves explicit remember requests immediately", async () => {
-    const { app, store, dir } = createTestApp();
+  it("saves reviewer-approved durable memory before responding", async () => {
+    const { app, store, dir, providerRouter } = createTestApp();
+    providerRouter.memoryReviewResponses.push(
+      JSON.stringify({
+        entries: [
+          {
+            target: "user",
+            content:
+              "When the user asks to work with repos, use the workspace path from the task notes.",
+          },
+        ],
+      }),
+      JSON.stringify({
+        entries: [
+          {
+            target: "user",
+            content: "The user prefers concise repo status summaries.",
+          },
+        ],
+      }),
+      JSON.stringify({
+        entries: [
+          {
+            target: "memory",
+            content:
+              "Draftmora validation workflow uses npm run typecheck, npm test, and npm run build.",
+          },
+        ],
+      }),
+    );
 
     const response = await app.inject({
       method: "POST",
@@ -672,7 +807,7 @@ describe("routes", () => {
           {
             role: "user",
             content:
-              "please remember that when I ask to work with repos, use the workspace path from the task notes",
+              "For repo work, I use the workspace path from the task notes.",
           },
         ],
       },
@@ -686,7 +821,7 @@ describe("routes", () => {
         messages: [
           {
             role: "user",
-            content: "remember that I prefer concise repo status summaries",
+            content: "I prefer concise repo status summaries.",
           },
         ],
       },
@@ -700,7 +835,7 @@ describe("routes", () => {
         messages: [
           {
             role: "user",
-            content: "remember validation workflow uses npm run typecheck, npm test, and npm run build",
+            content: "Draftmora validation workflow uses npm run typecheck, npm test, and npm run build.",
           },
         ],
       },
@@ -718,8 +853,102 @@ describe("routes", () => {
     store.close();
   });
 
-  it("does not save trailing response instructions in explicit memory", async () => {
-    const { app, store, dir } = createTestApp();
+  it("uses automatic memory review for durable user facts across conversations", async () => {
+    const { app, store, dir, providerRouter } = createTestApp();
+    providerRouter.memoryReviewResponses.push(
+      JSON.stringify({
+        entries: [{ target: "user", content: "The user's name is Andrii." }],
+      }),
+    );
+
+    const saved = await app.inject({
+      method: "POST",
+      url: "/api/assistant/chat",
+      payload: {
+        messages: [{ role: "user", content: "my name is andrii" }],
+      },
+    });
+    expect(saved.statusCode).toBe(201);
+    expect(readFileSync(path.join(dir, "USER.md"), "utf8")).toContain(
+      "The user's name is Andrii.",
+    );
+
+    const recalled = await app.inject({
+      method: "POST",
+      url: "/api/assistant/chat",
+      payload: {
+        messages: [{ role: "user", content: "what is my name?" }],
+      },
+    });
+
+    expect(recalled.statusCode).toBe(201);
+    expect(recalled.json().message.content).toBe("Your name is Andrii.");
+    expect(
+      providerRouter.requests.some((request) =>
+        request.systemPrompt?.includes("durable memory reviewer"),
+      ),
+    ).toBe(true);
+    expect(
+      providerRouter.requests
+        .filter((request) => request.systemPrompt?.includes("durable memory reviewer"))
+        .at(-1)
+        ?.messages.at(-1)?.content,
+    ).toContain("The user's name is Andrii.");
+    expect(providerRouter.requests.at(-1)?.systemPrompt).toContain("The user's name is Andrii.");
+    await app.close();
+    store.close();
+  });
+
+  it("applies reviewer removals when durable memory is corrected", async () => {
+    const { app, store, dir, providerRouter } = createTestApp();
+    providerRouter.memoryReviewResponses.push(
+      JSON.stringify({
+        entries: [{ target: "user", content: "The user's name is Andrii." }],
+        remove: [],
+      }),
+      JSON.stringify({
+        remove: [{ target: "user", content: "The user's name is Andrii." }],
+        entries: [{ target: "user", content: "The user's name is Bohdan." }],
+      }),
+    );
+
+    const saved = await app.inject({
+      method: "POST",
+      url: "/api/assistant/chat",
+      payload: {
+        messages: [{ role: "user", content: "my name is andrii" }],
+      },
+    });
+    expect(saved.statusCode).toBe(201);
+
+    const corrected = await app.inject({
+      method: "POST",
+      url: "/api/assistant/chat",
+      payload: {
+        messages: [{ role: "user", content: "actually my name is Bohdan" }],
+      },
+    });
+    expect(corrected.statusCode).toBe(201);
+
+    const userMemory = readFileSync(path.join(dir, "USER.md"), "utf8");
+    expect(userMemory).not.toContain("Andrii");
+    expect(userMemory).toContain("The user's name is Bohdan.");
+    await app.close();
+    store.close();
+  });
+
+  it("saves only reviewer-approved memory content from a mixed user turn", async () => {
+    const { app, store, dir, providerRouter } = createTestApp();
+    providerRouter.memoryReviewResponses.push(
+      JSON.stringify({
+        entries: [
+          {
+            target: "memory",
+            content: "Draftmora release checks use typecheck, tests, and build.",
+          },
+        ],
+      }),
+    );
 
     const response = await app.inject({
       method: "POST",
@@ -739,6 +968,11 @@ describe("routes", () => {
     const memory = readFileSync(path.join(dir, "MEMORY.md"), "utf8");
     expect(memory).toContain("Draftmora release checks use typecheck, tests, and build");
     expect(memory).not.toContain("Then reply");
+    expect(
+      providerRouter.requests.find((request) =>
+        request.systemPrompt?.includes("durable memory reviewer"),
+      )?.messages.at(-1)?.content,
+    ).toContain("Then reply in one short sentence");
     await app.close();
     store.close();
   });

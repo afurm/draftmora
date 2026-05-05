@@ -608,6 +608,8 @@ describe("routes", () => {
         ? followUpPrompt.content
         : "";
     expect(followUpPromptContent).toContain("Follow-up request: Can you also list blockers?");
+    expect(followUpPromptContent).toContain("Existing task results:");
+    expect(followUpPromptContent).toContain("Initial result from delayed provider.");
 
     providerRouter.resolveNextToolRequest("Follow-up result from delayed provider.");
     await waitUntil(

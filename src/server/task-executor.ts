@@ -34,7 +34,7 @@ export async function startTaskExecutionForTask(
 ): Promise<TaskExecution> {
   return startExecution({
     ...input,
-    prompt: input.prompt ?? buildTaskExecutionPrompt(input.task),
+    buildPrompt: (task) => input.prompt ?? buildTaskExecutionPrompt(task),
     queuedMessage: "Request queued.",
   });
 }
@@ -44,13 +44,16 @@ export async function startTaskFollowUpExecutionForTask(
 ): Promise<TaskExecution> {
   return startExecution({
     ...input,
-    prompt: buildTaskFollowUpPrompt(input.task, input.followUp),
+    buildPrompt: (task) => buildTaskFollowUpPrompt(task, input.followUp),
     queuedMessage: "Follow-up queued.",
   });
 }
 
 async function startExecution(
-  input: StartTaskExecutionInput & { prompt: string; queuedMessage: string },
+  input: StartTaskExecutionInput & {
+    buildPrompt: (task: Task) => string;
+    queuedMessage: string;
+  },
 ): Promise<TaskExecution> {
   const shouldMarkTaskInProgress = input.task.status !== "done";
   if (shouldMarkTaskInProgress) {
@@ -69,6 +72,8 @@ async function startExecution(
     if (shouldMarkTaskInProgress) {
       input.store.updateTask(input.task.id, { status: "in_progress" });
     }
+    const taskAtStart = input.store.getTask(input.task.id) ?? input.task;
+    const prompt = input.buildPrompt(taskAtStart);
     const startedAt = new Date().toISOString();
     let events = execution.events;
     const running = input.store.updateTaskExecution(execution.id, {
@@ -104,13 +109,13 @@ async function startExecution(
     };
     try {
       const boardContext = buildBoardTaskContext(input.store.listTasks(), input.task.id);
-      const systemPrompt = buildTaskSystemPrompt(input.prompt, boardContext, input.memoryRoot);
+      const systemPrompt = buildTaskSystemPrompt(prompt, boardContext, input.memoryRoot);
       const result = await completeTaskWithLocalTools({
         router: input.router,
         provider: input.provider,
         model: config.model,
         systemPrompt,
-        prompt: input.prompt,
+        prompt,
         onToolProgress: (message) => appendProgressEvent("progress", message),
       });
       input.store.updateTaskExecution(execution.id, {
@@ -134,10 +139,10 @@ async function startExecution(
         provider: input.provider,
         model: config.model,
         messages: [
-          { role: "user", content: input.prompt },
+          { role: "user", content: prompt },
           { role: "assistant", content: result || "Finished." },
         ],
-        query: input.prompt,
+        query: prompt,
         memoryRoot: input.memoryRoot,
         source: "task",
         logger: input.memoryLogger,
@@ -145,7 +150,7 @@ async function startExecution(
     } catch (err) {
       const failureMessage = redactedErrorMessage(err);
       const handoff = buildFailureHandoff({
-        task: input.task,
+        task: taskAtStart,
         failureMessage,
         events,
       });

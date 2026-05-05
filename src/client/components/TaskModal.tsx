@@ -10,7 +10,7 @@ import {
   Send,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   FocusArea,
   Priority,
@@ -126,7 +126,7 @@ export function TaskModal(props: {
 
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{finished ? props.task.title || props.title : props.title}</DialogTitle>
           <DialogDescription>
@@ -344,6 +344,15 @@ function TaskExecutionPanel(props: {
   const finished = props.mode === "finished";
   const running =
     !finished && (props.execution.status === "queued" || props.execution.status === "running");
+  const [showExecutionLog, setShowExecutionLog] = useState(
+    props.execution.status === "running" || props.execution.status === "failed",
+  );
+
+  useEffect(() => {
+    if (props.execution.status === "running" || props.execution.status === "failed") {
+      setShowExecutionLog(true);
+    }
+  }, [props.execution.status]);
 
   async function askFollowUp() {
     const prompt = followUp.trim();
@@ -372,11 +381,11 @@ function TaskExecutionPanel(props: {
 
   return (
     <section
-      className="flex flex-col gap-4"
+      className="flex min-w-0 flex-col gap-4 overflow-hidden"
       aria-label={finished ? "Task result" : "AI work"}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
             <span>{finished ? "Task chat" : running ? "Running work" : "AI work"}</span>
             <Badge variant={props.execution.status === "failed" ? "destructive" : "secondary"}>
@@ -416,8 +425,12 @@ function TaskExecutionPanel(props: {
       <Separator />
       <ExecutionResult execution={props.execution} />
 
-      <Separator />
-      <ExecutionOutput execution={props.execution} />
+      {props.execution.previousExecutions?.length ? (
+        <>
+          <Separator />
+          <PreviousExecutionResults executions={props.execution.previousExecutions} />
+        </>
+      ) : null}
 
       {props.execution.artifacts.length > 0 && (
         <>
@@ -494,6 +507,13 @@ function TaskExecutionPanel(props: {
           </FieldGroup>
         </>
       )}
+
+      <Separator />
+      <ExecutionOutput
+        execution={props.execution}
+        expanded={showExecutionLog}
+        onExpandedChange={setShowExecutionLog}
+      />
     </section>
   );
 }
@@ -532,9 +552,7 @@ function executionTerminalLines(execution: TaskExecution): string[] {
   const lines = execution.events.map(
     (event) => `[${formatEventTime(event.createdAt)}] ${formatExecutionMessage(event.message)}`,
   );
-  if (execution.output.trim()) {
-    lines.push("", execution.output.trim());
-  } else if (execution.status === "queued") {
+  if (execution.status === "queued") {
     lines.push("", "Waiting for the current task run to finish.");
   } else if (execution.status === "running") {
     lines.push("", "Waiting for assistant output...");
@@ -562,15 +580,63 @@ function ExecutionResult(props: { execution: TaskExecution }) {
   );
 }
 
-function ExecutionOutput(props: { execution: TaskExecution }) {
+function PreviousExecutionResults(props: { executions: TaskExecution[] }) {
+  const visibleExecutions = props.executions.filter((execution) => execution.output.trim());
+  if (visibleExecutions.length === 0) {
+    return null;
+  }
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Output</h3>
-      <ScrollArea className="max-h-72 rounded-lg border bg-muted">
-        <pre className="min-h-32 whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed text-muted-foreground">
-          {executionTerminalLines(props.execution).join("\n")}
-        </pre>
+      <h3 className="text-sm font-medium">Previous results</h3>
+      <ScrollArea className="max-h-80 max-w-full overflow-hidden pr-3">
+        <ItemGroup>
+          {visibleExecutions.map((execution) => (
+            <Item variant="muted" size="sm" className="items-start" key={execution.id}>
+              <ItemMedia variant="icon">
+                {executionStatusIcon(execution)}
+              </ItemMedia>
+              <ItemContent className="min-w-0 overflow-hidden">
+                <ItemTitle>{formatExecutionWindow(execution)}</ItemTitle>
+                <MarkdownMessage>{execution.output}</MarkdownMessage>
+              </ItemContent>
+            </Item>
+          ))}
+        </ItemGroup>
       </ScrollArea>
+    </section>
+  );
+}
+
+function ExecutionOutput(props: {
+  execution: TaskExecution;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
+  const lineCount = executionTerminalLines(props.execution).length;
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-medium">Technical details</h3>
+          <p className="text-sm text-muted-foreground">{lineCount} log lines</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onExpandedChange(!props.expanded)}
+        >
+          <FileText data-icon="inline-start" />
+          {props.expanded ? "Hide log" : "Show log"}
+        </Button>
+      </div>
+      {props.expanded && (
+        <ScrollArea className="max-h-48 max-w-full overflow-hidden rounded-lg border bg-muted">
+          <pre className="min-h-24 max-w-full whitespace-pre-wrap break-all p-3 font-mono text-xs leading-relaxed text-muted-foreground">
+            {executionTerminalLines(props.execution).join("\n")}
+          </pre>
+        </ScrollArea>
+      )}
     </section>
   );
 }

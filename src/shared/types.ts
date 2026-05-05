@@ -105,6 +105,7 @@ export interface TaskExecution {
   error: string | null;
   artifacts: TaskExecutionArtifact[];
   events: TaskExecutionEvent[];
+  previousExecutions?: TaskExecution[];
   createdAt: string;
   updatedAt: string;
 }

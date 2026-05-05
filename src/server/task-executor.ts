@@ -353,9 +353,41 @@ function buildTaskFollowUpPrompt(task: Task, prompt: string): string {
     `Title: ${task.title}`,
     task.description ? `Notes: ${task.description}` : "",
     `Priority: ${task.priority}`,
+    formatTaskExecutionScope(task),
     `Follow-up request: ${prompt}`,
     "Continue from the existing task context and reply in Markdown.",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatTaskExecutionScope(task: Task): string {
+  const executions = getTaskExecutionHistory(task).filter((execution) => execution.output.trim());
+  if (executions.length === 0) {
+    return "";
+  }
+  return [
+    "Existing task results:",
+    ...executions.slice(-5).map((execution, index) =>
+      [
+        `Result ${index + 1}: ${formatTaskExecutionWindow(execution)}`,
+        truncateForPrompt(execution.output.trim(), 2_500),
+      ].join("\n"),
+    ),
+  ].join("\n\n");
+}
+
+function getTaskExecutionHistory(task: Task): TaskExecution[] {
+  const previous = task.execution?.previousExecutions ?? [];
+  return task.execution ? [...previous, task.execution] : previous;
+}
+
+function formatTaskExecutionWindow(execution: TaskExecution): string {
+  if (execution.endedAt) {
+    return `finished ${execution.endedAt}`;
+  }
+  if (execution.startedAt) {
+    return `started ${execution.startedAt}`;
+  }
+  return `created ${execution.createdAt}`;
 }

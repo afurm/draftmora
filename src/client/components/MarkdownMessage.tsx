@@ -12,7 +12,7 @@ const markdownComponents: Components = {
     <h3 className="text-sm font-medium text-foreground" {...props} />
   ),
   p: ({ node: _node, ...props }) => (
-    <p className="text-sm leading-relaxed text-muted-foreground" {...props} />
+    <p className="break-words text-sm leading-relaxed text-muted-foreground" {...props} />
   ),
   ul: ({ node: _node, ...props }) => (
     <ul className="flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground" {...props} />
@@ -26,7 +26,7 @@ const markdownComponents: Components = {
   ),
   a: ({ node: _node, ...props }) => (
     <a
-      className="font-medium text-primary underline underline-offset-4"
+      className="break-all font-medium text-primary underline underline-offset-4"
       {...props}
       target="_blank"
       rel="noreferrer"
@@ -39,13 +39,19 @@ const markdownComponents: Components = {
     />
   ),
   pre: ({ node: _node, ...props }) => (
-    <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs text-foreground" {...props} />
+    <pre
+      className="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 text-xs text-foreground"
+      {...props}
+    />
   ),
   code: ({ node: _node, ...props }) => (
-    <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground" {...props} />
+    <code
+      className="break-all rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground"
+      {...props}
+    />
   ),
   table: ({ node: _node, ...props }) => (
-    <div className="overflow-x-auto">
+    <div className="max-w-full overflow-x-auto">
       <table className="w-full text-sm text-muted-foreground" {...props} />
     </div>
   ),
@@ -57,7 +63,7 @@ const markdownComponents: Components = {
 
 export function MarkdownMessage(props: { children: string }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-w-0 flex-col gap-2">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {props.children}
       </ReactMarkdown>

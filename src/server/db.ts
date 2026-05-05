@@ -436,6 +436,19 @@ export class BoardStore {
     return row ? this.mapTaskExecution(row as TaskExecutionRow) : null;
   }
 
+  listTaskExecutions(taskId: string): TaskExecution[] {
+    return this.db
+      .prepare(
+        `SELECT id, task_id, agent_run_id, status, provider, model, started_at, ended_at,
+                progress_summary, output, error, artifacts, events, created_at, updated_at
+         FROM task_executions
+         WHERE task_id = ?
+         ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(taskId)
+      .map((row) => this.mapTaskExecution(row as TaskExecutionRow));
+  }
+
   listAssistantChatConversations(limit = 60): AssistantChatConversation[] {
     return this.db
       .prepare(
@@ -984,6 +997,8 @@ export class BoardStore {
   }
 
   private mapTask(row: TaskRow): Task {
+    const executions = this.listTaskExecutions(row.id);
+    const latestExecution = executions.at(-1) ?? null;
     return {
       id: row.id,
       title: row.title,
@@ -993,7 +1008,9 @@ export class BoardStore {
       focusAreaId: row.focus_area_id || null,
       tags: safeJsonParse<string[]>(row.tags, []),
       providerSource: normalizeProviderSource(row.provider_source),
-      execution: this.getLatestTaskExecution(row.id),
+      execution: latestExecution
+        ? { ...latestExecution, previousExecutions: executions.slice(0, -1) }
+        : null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

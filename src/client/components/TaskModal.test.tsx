@@ -38,12 +38,14 @@ describe("TaskModal", () => {
     expect(document.body.textContent).toContain("Notes");
     expect(document.body.textContent).toContain("Where is Lviv located?");
     expect(document.body.textContent).toContain("Result");
-    expect(document.body.textContent).toContain("Output");
+    expect(document.body.textContent).toContain("Technical details");
+    expect(document.body.textContent).toContain("Show log");
     expect(document.body.textContent).toContain("Lviv is in western Ukraine.");
+    expect(document.body.textContent).not.toContain("**Lviv**");
     expect(document.body.querySelector("strong")?.textContent).toBe("Lviv");
     expect(document.body.querySelector("li")?.textContent).toBe("It is close to Poland.");
     expect(document.body.textContent).toContain("Ask a follow-up");
-    expect(document.body.textContent).toContain("Work started.");
+    expect(document.body.textContent).not.toContain("Work started.");
     expect(document.body.textContent).not.toContain("Progress");
     expect(document.body.textContent).not.toContain("Save task");
     expect(document.body.textContent).not.toContain("Delete");
@@ -65,9 +67,33 @@ describe("TaskModal", () => {
     expect(document.body.textContent).toContain("Current step");
     expect(document.body.textContent).toContain("Result");
     expect(document.body.textContent).toContain("No final result yet.");
-    expect(document.body.textContent).toContain("Output");
+    expect(document.body.textContent).toContain("Technical details");
+    expect(document.body.textContent).toContain("Hide log");
     expect(document.body.textContent).toContain("Waiting for assistant output...");
     expect(document.body.textContent).toContain("Queues behind current work");
+  });
+
+  it("keeps previous results visible while a follow-up is running", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "running",
+        endedAt: null,
+        output: "",
+        previousExecutions: [
+          execution({
+            id: "execution-previous",
+            status: "succeeded",
+            output: "Previous result that should stay visible.",
+          }),
+        ],
+      }),
+    });
+
+    expect(document.body.textContent).toContain("No final result yet.");
+    expect(document.body.textContent).toContain("Previous results");
+    expect(document.body.textContent).toContain("Previous result that should stay visible.");
+    expect(document.body.textContent).toContain("Waiting for assistant output...");
   });
 
   it("labels editable select controls for assistive technology", async () => {

@@ -483,7 +483,7 @@ describe("routes", () => {
   });
 
   it("keeps follow-up work attached to the task execution history", async () => {
-    const { app, store } = createTestApp({ runTaskExecutionsInline: true });
+    const { app, store, providerRouter } = createTestApp({ runTaskExecutionsInline: true });
     const created = await app.inject({
       method: "POST",
       url: "/api/tasks",
@@ -505,11 +505,24 @@ describe("routes", () => {
     expect(body.task.status).toBe("done");
     expect(body.task.execution.status).toBe("succeeded");
     expect(body.task.execution.output).toBe("Follow-up result from stub provider.");
+    expect(body.task.execution.previousExecutions).toHaveLength(1);
+    expect(body.task.execution.previousExecutions[0].output).toBe(
+      "Initial result from stub provider.",
+    );
     expect(body.task.execution.events.map((event: { message: string }) => event.message)).toEqual([
       "Follow-up queued.",
       "Work started.",
       "Work completed.",
     ]);
+    const followUpPrompt = providerRouter.toolRequests.at(-1)?.context.messages.find(
+      (message) => message.role === "user",
+    );
+    const followUpPromptContent =
+      followUpPrompt?.role === "user" && typeof followUpPrompt.content === "string"
+        ? followUpPrompt.content
+        : "";
+    expect(followUpPromptContent).toContain("Existing task results:");
+    expect(followUpPromptContent).toContain("Initial result from stub provider.");
     await app.close();
     store.close();
   });

@@ -135,13 +135,28 @@ export function App() {
       return;
     }
     const refreshed = tasks.find((task) => task.id === editingTask.id);
+    let cancelled = false;
     if (
       refreshed &&
       (refreshed.updatedAt !== editingTask.updatedAt ||
         refreshed.execution?.updatedAt !== editingTask.execution?.updatedAt)
     ) {
-      setEditingTask(refreshed);
+      void api
+        .getTask(editingTask.id)
+        .then((response) => {
+          if (!cancelled) {
+            setEditingTask(response.task);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+        });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [editingTask, tasks]);
 
   const filteredTasks = useMemo(() => {
@@ -214,6 +229,16 @@ export function App() {
   async function createDraftTask(input: TaskCreateInput) {
     const result = await api.createTask(input);
     setTasks((current) => [...current, result.task]);
+  }
+
+  function openTaskEditor(task: Task) {
+    setEditingTask(task);
+    void api
+      .getTask(task.id)
+      .then((response) => {
+        setEditingTask((current) => (current?.id === task.id ? response.task : current));
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }
 
   async function deleteTask(id: string) {
@@ -512,7 +537,7 @@ export function App() {
                     tasks={filteredTasks}
                     focusAreas={focusAreas}
                     onCreateTask={setCreatingStatus}
-                    onEditTask={setEditingTask}
+                    onEditTask={openTaskEditor}
                     onMoveTask={moveTask}
                   />
                 )}

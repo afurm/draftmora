@@ -136,6 +136,27 @@ describe("openAiProvider", () => {
     ).rejects.toThrow("assistantMsg.content.flatMap is not a function");
   });
 
+  it("retries OAuth Codex WebSocket closes over SSE", async () => {
+    mocks.complete
+      .mockResolvedValueOnce({
+        ...assistantMessage(""),
+        content: [],
+        stopReason: "error",
+        errorMessage: "WebSocket closed 1006",
+      })
+      .mockResolvedValueOnce(assistantMessage("Recovered over SSE."));
+
+    const response = await openAiProvider.complete(
+      makeRequest([{ role: "user", content: "continue the task" }]),
+      { ...auth, transport: "auto" },
+    );
+
+    expect(response.content).toBe("Recovered over SSE.");
+    expect(mocks.complete).toHaveBeenCalledTimes(2);
+    expect(mocks.complete.mock.calls[0][2]).toMatchObject({ transport: "auto" });
+    expect(mocks.complete.mock.calls[1][2]).toMatchObject({ transport: "sse" });
+  });
+
   it("passes saved OpenAI request configuration to the SDK", async () => {
     let capturedOptions: unknown;
     mocks.complete.mockImplementation(async (_model, _context, options) => {

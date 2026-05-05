@@ -75,6 +75,37 @@ describe("BoardStore", () => {
     reopened.close();
   });
 
+  it("keeps execution history out of task lists but available on task detail", () => {
+    const store = createStore();
+    const task = store.createTask({
+      title: "Review deployment",
+      status: "done",
+    });
+
+    store.createTaskExecution({
+      taskId: task.id,
+      provider: "openai",
+      status: "succeeded",
+      output: "First result.",
+    });
+    store.createTaskExecution({
+      taskId: task.id,
+      provider: "openai",
+      status: "succeeded",
+      output: "Second result.",
+    });
+
+    const listed = store.listTasks().find((entry) => entry.id === task.id);
+    expect(listed?.execution?.output).toBe("Second result.");
+    expect(listed?.execution?.previousExecutions).toBeUndefined();
+
+    const detailed = store.getTask(task.id);
+    expect(detailed?.execution?.output).toBe("Second result.");
+    expect(detailed?.execution?.previousExecutions).toHaveLength(1);
+    expect(detailed?.execution?.previousExecutions?.[0]?.output).toBe("First result.");
+    store.close();
+  });
+
   it("persists configurable focus areas in settings", () => {
     const store = createStore();
 

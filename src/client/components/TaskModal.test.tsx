@@ -135,6 +135,37 @@ describe("TaskModal", () => {
     expect(getButton("Draft task").disabled).toBe(true);
   });
 
+  it("caps previous next-action context in follow-up prompts", async () => {
+    const onAskFollowUp = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "succeeded",
+          output: `${"Latest release detail. ".repeat(140)}\n\n## Next action\n- Check release logs.`,
+          previousExecutions: Array.from({ length: 6 }, (_, index) =>
+            execution({
+              id: `execution-previous-${index}`,
+              output:
+                index === 0
+                  ? "Oldest previous result that should not be included."
+                  : `Recent previous result ${index}. ${index === 5 ? "x".repeat(3_000) : ""}`,
+            }),
+          ),
+        }),
+      },
+      { onAskFollowUp },
+    );
+
+    await clickButton("Run as follow-up");
+
+    const prompt = onAskFollowUp.mock.calls[0]?.[0] ?? "";
+    expect(prompt).not.toContain("Oldest previous result that should not be included.");
+    expect(prompt).toContain("Recent previous result 2.");
+    expect(prompt).toContain("Recent previous result 5.");
+    expect(prompt).toContain("...[truncated]");
+  });
+
   it("creates a draft task from a next action", async () => {
     const onCreateDraft = vi.fn().mockResolvedValue(undefined);
     await renderTaskModal(

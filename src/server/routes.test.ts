@@ -527,6 +527,42 @@ describe("routes", () => {
     store.close();
   });
 
+  it("omits previous execution outputs from list responses but returns them on task detail", async () => {
+    const { app, store } = createTestApp({ runTaskExecutionsInline: true });
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Summarize release",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task;
+
+    await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up`,
+      payload: { prompt: "Add deployment notes." },
+    });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/tasks",
+    });
+    const listedTask = listed.json().tasks.find((entry: { id: string }) => entry.id === task.id);
+    expect(listedTask.execution.output).toBe("Follow-up result from stub provider.");
+    expect(listedTask.execution.previousExecutions).toBeUndefined();
+
+    const detailed = await app.inject({
+      method: "GET",
+      url: `/api/tasks/${task.id}`,
+    });
+    expect(detailed.statusCode).toBe(200);
+    expect(detailed.json().task.execution.previousExecutions).toHaveLength(1);
+    await app.close();
+    store.close();
+  });
+
   it("queues a task follow-up until the active task run finishes", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "routes-queue-"));
     tempDirs.push(dir);

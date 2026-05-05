@@ -219,7 +219,7 @@ export class BoardStore {
          ORDER BY created_at ASC`,
       )
       .all()
-      .map((row) => this.mapTask(row as TaskRow));
+      .map((row) => this.mapTask(row as TaskRow, { includeExecutionHistory: false }));
   }
 
   getTask(id: string): Task | null {
@@ -231,7 +231,7 @@ export class BoardStore {
          WHERE id = ?`,
       )
       .get(id);
-    return row ? this.mapTask(row as TaskRow) : null;
+    return row ? this.mapTask(row as TaskRow, { includeExecutionHistory: true }) : null;
   }
 
   createTask(input: TaskCreateInput): Task {
@@ -996,9 +996,10 @@ export class BoardStore {
     return [...byProvider.values()].sort((a, b) => a.fallbackRank - b.fallbackRank);
   }
 
-  private mapTask(row: TaskRow): Task {
-    const executions = this.listTaskExecutions(row.id);
-    const latestExecution = executions.at(-1) ?? null;
+  private mapTask(row: TaskRow, options: { includeExecutionHistory: boolean }): Task {
+    const execution = options.includeExecutionHistory
+      ? this.getLatestTaskExecutionWithHistory(row.id)
+      : this.getLatestTaskExecution(row.id);
     return {
       id: row.id,
       title: row.title,
@@ -1008,12 +1009,18 @@ export class BoardStore {
       focusAreaId: row.focus_area_id || null,
       tags: safeJsonParse<string[]>(row.tags, []),
       providerSource: normalizeProviderSource(row.provider_source),
-      execution: latestExecution
-        ? { ...latestExecution, previousExecutions: executions.slice(0, -1) }
-        : null,
+      execution,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  private getLatestTaskExecutionWithHistory(taskId: string): TaskExecution | null {
+    const executions = this.listTaskExecutions(taskId);
+    const latestExecution = executions.at(-1) ?? null;
+    return latestExecution
+      ? { ...latestExecution, previousExecutions: executions.slice(0, -1) }
+      : null;
   }
 
   private mapTaskExecution(row: TaskExecutionRow): TaskExecution {

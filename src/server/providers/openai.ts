@@ -46,12 +46,23 @@ async function completeOpenAi(
   auth: ProviderAuth,
   maxTokens?: number,
 ): Promise<AssistantMessage> {
+  const options = buildOpenAiOptions(auth, maxTokens);
   try {
-    return await complete(model, context, {
-      ...buildOpenAiOptions(auth, maxTokens),
-    });
+    const message = await complete(model, context, options);
+    if (shouldRetryCodexOverSse(message, auth, options)) {
+      return await complete(model, context, { ...options, transport: "sse" });
+    }
+    return message;
   } catch (err) {
-    throw redactedError(err);
+    const error = redactedError(err);
+    if (shouldRetryCodexOverSse(error, auth, options)) {
+      try {
+        return await complete(model, context, { ...options, transport: "sse" });
+      } catch (retryErr) {
+        throw redactedError(retryErr);
+      }
+    }
+    throw error;
   }
 }
 
@@ -99,6 +110,28 @@ function buildOpenAiOptions(
     options.textVerbosity = auth.textVerbosity;
   }
   return options;
+}
+
+function shouldRetryCodexOverSse(
+  result: AssistantMessage | Error,
+  auth: ProviderAuth,
+  options: ProviderStreamOptions,
+) {
+  return (
+    auth.authMode === "oauth" &&
+    options.transport !== "sse" &&
+    isWebSocketCloseError(result)
+  );
+}
+
+function isWebSocketCloseError(result: AssistantMessage | Error) {
+  const message =
+    result instanceof Error
+      ? result.message
+      : result.stopReason === "error"
+        ? result.errorMessage
+        : undefined;
+  return /\bWebSocket closed(?:\s+\d+)?\b/i.test(message ?? "");
 }
 
 function resolveOpenAiModel(auth: ProviderAuth, modelId: string): Model<Api> {

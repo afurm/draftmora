@@ -41,6 +41,9 @@ export const api = {
   async listTasks() {
     return request<{ tasks: Task[] }>("/api/tasks");
   },
+  async getTask(id: string) {
+    return request<{ task: Task }>(`/api/tasks/${id}`);
+  },
   async createTask(input: TaskCreateInput) {
     return request<TaskMutationResponse>("/api/tasks", {
       method: "POST",

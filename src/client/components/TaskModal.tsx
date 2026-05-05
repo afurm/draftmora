@@ -66,6 +66,8 @@ import { getFocusAreaStyle } from "../focus-areas";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 const NO_FOCUS_AREA = "__none";
+const NEXT_ACTION_CONTEXT_RESULT_LIMIT = 5;
+const NEXT_ACTION_CONTEXT_OUTPUT_LIMIT = 2_500;
 
 export function TaskModal(props: {
   task: Task;
@@ -814,23 +816,34 @@ function formatNextActionTaskDescription(
 }
 
 function formatNextActionContext(task: Task, execution: TaskExecution, nextAction: string) {
+  const latestOutput = execution.output.trim();
+  const previousResultLimit = latestOutput
+    ? NEXT_ACTION_CONTEXT_RESULT_LIMIT - 1
+    : NEXT_ACTION_CONTEXT_RESULT_LIMIT;
   const sections = [
     "## Source task",
     `Title: ${task.title || "Untitled task"}`,
     `Status: ${COLUMN_LABELS[task.status]}`,
     `Priority: ${task.priority}`,
     task.description.trim() ? `Notes:\n${task.description.trim()}` : "Notes: None saved.",
-    execution.output.trim() ? `## Latest result\n${execution.output.trim()}` : null,
-    formatPreviousResultContext(execution.previousExecutions ?? []),
+    latestOutput ? `## Latest result\n${truncateForTaskContext(latestOutput)}` : null,
+    formatPreviousResultContext(execution.previousExecutions ?? [], previousResultLimit),
     `## Next action to complete\n${nextAction}`,
   ];
   return sections.filter(Boolean).join("\n\n");
 }
 
-function formatPreviousResultContext(executions: TaskExecution[]) {
+function formatPreviousResultContext(executions: TaskExecution[], limit: number) {
+  if (limit <= 0) {
+    return null;
+  }
   const previousResults = executions
     .filter((execution) => execution.output.trim())
-    .map((execution, index) => `### Previous result ${index + 1}\n${execution.output.trim()}`);
+    .slice(-Math.max(0, limit))
+    .map(
+      (execution, index) =>
+        `### Previous result ${index + 1}\n${truncateForTaskContext(execution.output.trim())}`,
+    );
   if (previousResults.length === 0) {
     return null;
   }
@@ -838,6 +851,13 @@ function formatPreviousResultContext(executions: TaskExecution[]) {
     "## Previous results",
     ...previousResults,
   ].join("\n\n");
+}
+
+function truncateForTaskContext(value: string) {
+  if (value.length <= NEXT_ACTION_CONTEXT_OUTPUT_LIMIT) {
+    return value;
+  }
+  return `${value.slice(0, NEXT_ACTION_CONTEXT_OUTPUT_LIMIT)}\n...[truncated]`;
 }
 
 function ExecutionOutput(props: {

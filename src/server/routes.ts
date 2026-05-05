@@ -200,6 +200,14 @@ export function buildServer(options: {
 
   app.get("/api/tasks", async () => ({ tasks: store.listTasks() }));
 
+  app.get<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
+    const task = store.getTask(request.params.id);
+    if (!task) {
+      return reply.status(404).send({ error: "Task not found" });
+    }
+    return { task };
+  });
+
   app.post("/api/tasks", async (request, reply) => {
     const input = taskCreateSchema.parse(request.body);
     const task = store.createTask(input);

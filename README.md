@@ -138,6 +138,27 @@ The package starts on `http://127.0.0.1:4141` and stores data in
 `./data/board.db` from the directory where the command is run. Set
 `BOARD_DB_PATH` when you want a fixed database location.
 
+## Release Automation
+
+Publishing a GitHub Release whose tag matches `package.json` publishes the same
+version to npm automatically. For example, release tag `v0.1.1` publishes
+`draftmora@0.1.1`.
+
+One-time npm setup:
+
+1. Open the npm package settings for
+   [`draftmora`](https://www.npmjs.com/package/draftmora).
+2. Add a trusted publisher with GitHub Actions.
+3. Use owner `afurm`, repository `draftmora`, and workflow filename
+   `release-publish.yml`.
+
+The workflow validates dependencies, typecheck, tests, build, and package smoke
+before running `npm publish`.
+
+GitHub's repository sidebar "Packages" section is separate from npm. It only
+shows packages published to GitHub Packages, not packages published to
+npmjs.com.
+
 ## Security Model
 
 Draftmora is designed as a personal, local-first app. The Fastify API binds to

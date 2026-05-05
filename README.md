@@ -140,9 +140,10 @@ The package starts on `http://127.0.0.1:4141` and stores data in
 
 ## Release Automation
 
-Publishing a GitHub Release whose tag matches `package.json` publishes the same
-version to npm automatically. For example, release tag `v0.1.1` publishes
-`draftmora@0.1.1`.
+Publishing a GitHub Release whose tag matches `package.json` can publish the
+same version to the release page, npm, and GitHub Packages in one workflow. For
+example, release tag `v0.1.1` publishes `draftmora@0.1.1` to npm and
+`@afurm/draftmora@0.1.1` to GitHub Packages.
 
 One-time npm setup:
 
@@ -153,11 +154,14 @@ One-time npm setup:
    `release-publish.yml`.
 
 The workflow validates dependencies, typecheck, tests, build, and package smoke
-before running `npm publish`.
+before publishing. npm receives the public CLI package users should install with
+`npx draftmora`. GitHub Packages receives a scoped mirror package so the repo
+sidebar can show a package entry.
 
 GitHub's repository sidebar "Packages" section is separate from npm. It only
 shows packages published to GitHub Packages, not packages published to
-npmjs.com.
+npmjs.com. GitHub's npm registry requires a scoped package name, so the GitHub
+Packages mirror is published as `@afurm/draftmora`.
 
 ## Security Model
 

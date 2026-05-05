@@ -14,18 +14,29 @@ on:
         required: true
         type: boolean
         default: true
+      publish_npm:
+        description: "Publish to npmjs.com"
+        required: true
+        type: boolean
+        default: true
+      publish_github_packages:
+        description: "Publish to GitHub Packages as @afurm/draftmora"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 concurrency:
   group: release-publish-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  publish-npm:
-    name: Publish to npm
+  publish:
+    name: Publish packages
     if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -81,10 +92,30 @@ jobs:
       - name: Package smoke
         run: npm pack --dry-run
 
-      - name: Publish dry run
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+      - name: Publish npm dry run
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_npm && inputs.dry_run
         run: npm publish --access public --dry-run
 
       - name: Publish to npm
-        if: github.event_name == 'release' || !inputs.dry_run
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_npm && !inputs.dry_run)
         run: npm publish --access public
+
+      - name: Configure GitHub Packages metadata
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_github_packages)
+        run: |
+          npm pkg set name="@afurm/draftmora" publishConfig.registry="https://npm.pkg.github.com"
+          printf '@afurm:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n' > .npmrc
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish GitHub Packages dry run
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_github_packages && inputs.dry_run
+        run: npm publish --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GitHub Packages
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_github_packages && !inputs.dry_run)
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

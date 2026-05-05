@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BoardStore } from "./db";
 import { buildServer } from "./routes";
 import { ProviderRouter } from "./providers/router";
+import type { Task } from "../shared/types";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -180,6 +181,42 @@ class StubProviderRouter extends ProviderRouter {
   }
 }
 
+class BlockingTaskProviderRouter extends ProviderRouter {
+  requests: CompletionRequest[] = [];
+  toolRequests: ToolCompletionRequest[] = [];
+  private toolCompletions: Array<(content: string) => void> = [];
+
+  override async complete(request: CompletionRequest): Promise<CompletionResult> {
+    this.requests.push(request);
+    return {
+      content: JSON.stringify({ entries: [] }),
+      raw: {} as CompletionResult["raw"],
+    };
+  }
+
+  override async completeWithTools(
+    request: ToolCompletionRequest,
+  ): Promise<ToolCompletionResult> {
+    this.toolRequests.push(request);
+    return new Promise<ToolCompletionResult>((resolve) => {
+      this.toolCompletions.push((content) => {
+        resolve({
+          content,
+          raw: assistantMessage(content),
+        });
+      });
+    });
+  }
+
+  resolveNextToolRequest(content: string): void {
+    const resolve = this.toolCompletions.shift();
+    if (!resolve) {
+      throw new Error("No pending tool request to resolve.");
+    }
+    resolve(content);
+  }
+}
+
 function assistantMessage(content: string): ToolCompletionResult["raw"] {
   return {
     role: "assistant",
@@ -225,6 +262,17 @@ function createTestApp(options: { runTaskExecutionsInline?: boolean } = {}) {
   return { app, store, dir, providerRouter };
 }
 
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for condition.");
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { recursive: true, force: true });
@@ -242,6 +290,7 @@ describe("routes", () => {
       url: "/api/tasks",
       payload: {
         title: "Write tests",
+        description: "Keep this note when the card moves.",
         status: "ready",
         priority: "high",
         focusAreaId: workArea?.id,
@@ -258,6 +307,7 @@ describe("routes", () => {
     });
     expect(patched.statusCode).toBe(200);
     expect(patched.json().task.status).toBe("done");
+    expect(patched.json().task.description).toBe("Keep this note when the card moves.");
 
     const deleted = await app.inject({ method: "DELETE", url: `/api/tasks/${task.id}` });
     expect(deleted.statusCode).toBe(204);
@@ -460,6 +510,62 @@ describe("routes", () => {
       "Work started.",
       "Work completed.",
     ]);
+    await app.close();
+    store.close();
+  });
+
+  it("queues a task follow-up until the active task run finishes", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "routes-queue-"));
+    tempDirs.push(dir);
+    const store = new BoardStore(path.join(dir, "board.db"));
+    const providerRouter = new BlockingTaskProviderRouter(store);
+    const app = buildServer({
+      store,
+      providerRouter,
+      memoryRoot: dir,
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Explain release risk",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task as Task;
+
+    await waitUntil(() => providerRouter.toolRequests.length === 1);
+
+    const followUp = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up`,
+      payload: { prompt: "Can you also list blockers?" },
+    });
+
+    expect(followUp.statusCode).toBe(201);
+    expect(followUp.json().task.execution.status).toBe("queued");
+    expect(followUp.json().task.execution.progressSummary).toBe("Follow-up queued.");
+    expect(providerRouter.toolRequests).toHaveLength(1);
+
+    providerRouter.resolveNextToolRequest("Initial result from delayed provider.");
+    await waitUntil(() => providerRouter.toolRequests.length === 2);
+
+    const followUpPrompt = providerRouter.toolRequests[1]?.context.messages.find(
+      (message) => message.role === "user",
+    );
+    const followUpPromptContent =
+      followUpPrompt?.role === "user" && typeof followUpPrompt.content === "string"
+        ? followUpPrompt.content
+        : "";
+    expect(followUpPromptContent).toContain("Follow-up request: Can you also list blockers?");
+
+    providerRouter.resolveNextToolRequest("Follow-up result from delayed provider.");
+    await waitUntil(
+      () => store.getTask(task.id)?.execution?.output === "Follow-up result from delayed provider.",
+    );
+
+    expect(store.getTask(task.id)?.status).toBe("done");
     await app.close();
     store.close();
   });

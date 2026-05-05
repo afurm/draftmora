@@ -16,6 +16,7 @@ import type { ProviderRouter } from "./providers/router";
 import { redactedErrorMessage } from "./redaction";
 
 const MAX_LOCAL_TOOL_ROUNDS = 24;
+const taskExecutionQueues = new Map<string, Promise<void>>();
 
 type StartTaskExecutionInput = {
   store: BoardStore;
@@ -51,7 +52,8 @@ export async function startTaskFollowUpExecutionForTask(
 async function startExecution(
   input: StartTaskExecutionInput & { prompt: string; queuedMessage: string },
 ): Promise<TaskExecution> {
-  if (input.task.status !== "done") {
+  const shouldMarkTaskInProgress = input.task.status !== "done";
+  if (shouldMarkTaskInProgress) {
     input.store.updateTask(input.task.id, { status: "in_progress" });
   }
   const config = input.store.getProviderConfig(input.provider);
@@ -64,6 +66,9 @@ async function startExecution(
     events: [{ id: "", kind: "queued", message: input.queuedMessage, createdAt: "" }],
   });
   const run = async () => {
+    if (shouldMarkTaskInProgress) {
+      input.store.updateTask(input.task.id, { status: "in_progress" });
+    }
     const startedAt = new Date().toISOString();
     let events = execution.events;
     const running = input.store.updateTaskExecution(execution.id, {
@@ -163,12 +168,27 @@ async function startExecution(
       input.store.updateTask(input.task.id, { status: "needs_attention" });
     }
   };
+  const queuedRun = enqueueTaskExecution(input.task.id, run);
   if (input.runInline) {
-    await run();
+    await queuedRun;
   } else {
-    void run();
+    void queuedRun.catch((err) => {
+      console.warn(err instanceof Error ? err.message : String(err));
+    });
   }
   return input.store.getTaskExecution(execution.id) ?? execution;
+}
+
+function enqueueTaskExecution(taskId: string, run: () => Promise<void>): Promise<void> {
+  const previous = taskExecutionQueues.get(taskId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(run);
+  const tracked = current.finally(() => {
+    if (taskExecutionQueues.get(taskId) === tracked) {
+      taskExecutionQueues.delete(taskId);
+    }
+  });
+  taskExecutionQueues.set(taskId, tracked);
+  return current;
 }
 
 async function completeTaskWithLocalTools(input: {

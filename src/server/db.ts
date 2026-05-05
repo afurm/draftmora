@@ -429,7 +429,7 @@ export class BoardStore {
                 progress_summary, output, error, artifacts, events, created_at, updated_at
          FROM task_executions
          WHERE task_id = ?
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, rowid DESC
          LIMIT 1`,
       )
       .get(taskId);

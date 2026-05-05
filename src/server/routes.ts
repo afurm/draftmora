@@ -45,8 +45,14 @@ const taskCreateSchema = z.object({
   providerSource: z.union([z.enum(PROVIDERS), z.literal("local")]).nullable().optional(),
 });
 
-const taskUpdateSchema = taskCreateSchema.partial().extend({
+const taskUpdateSchema = z.object({
   title: z.string().trim().min(1).optional(),
+  description: z.string().optional(),
+  status: z.enum(TASK_STATUSES).optional(),
+  priority: z.enum(PRIORITIES).optional(),
+  focusAreaId: z.string().nullable().optional(),
+  tags: z.array(z.string()).optional(),
+  providerSource: z.union([z.enum(PROVIDERS), z.literal("local")]).nullable().optional(),
 });
 
 const taskFollowUpSchema = z.object({

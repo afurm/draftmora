@@ -24,7 +24,6 @@ import { COLUMN_LABELS, PRIORITIES, TASK_STATUSES } from "../../shared/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +34,13 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupText,
+  InputGroupTextarea,
+} from "@/components/ui/input-group";
 import {
   Item,
   ItemActions,
@@ -262,42 +268,53 @@ function FinishedTaskContent(props: {
   task: Task;
   onAskFollowUp?: (prompt: string) => Promise<void>;
 }) {
+  const notes = props.task.description.trim();
+
   if (props.task.execution) {
     return (
-      <TaskExecutionPanel
-        execution={props.task.execution}
-        onAskFollowUp={props.onAskFollowUp}
-        mode="finished"
-      />
+      <div className="flex flex-col gap-4">
+        <TaskNotes notes={notes} />
+        <TaskExecutionPanel
+          execution={props.task.execution}
+          onAskFollowUp={props.onAskFollowUp}
+          mode="finished"
+        />
+      </div>
     );
   }
 
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          <span>Task complete</span>
-          <Badge variant="secondary">
-            <CheckCircle2 data-icon="inline-start" />
-            Done
-          </Badge>
-        </CardTitle>
-        <CardDescription>{props.task.description || "This task is complete."}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Item variant="muted">
-          <ItemMedia variant="icon">
-            <CheckCircle2 />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>Completed</ItemTitle>
-            <p className="text-sm text-muted-foreground">
-              {props.task.description || "No notes saved."}
-            </p>
-          </ItemContent>
-        </Item>
-      </CardContent>
-    </Card>
+    <section className="flex flex-col gap-3" aria-label="Completed task">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-medium">Task complete</h3>
+        <Badge variant="secondary">
+          <CheckCircle2 data-icon="inline-start" />
+          Done
+        </Badge>
+      </div>
+      <Item variant="muted">
+        <ItemMedia variant="icon">
+          <CheckCircle2 />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>Completed</ItemTitle>
+          <p className="text-sm text-muted-foreground">
+            {notes || "No notes saved."}
+          </p>
+        </ItemContent>
+      </Item>
+    </section>
+  );
+}
+
+function TaskNotes(props: { notes: string }) {
+  return (
+    <section className="flex flex-col gap-2" aria-label="Task notes">
+      <h3 className="text-sm font-medium">Notes</h3>
+      <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+        {props.notes || "No notes saved."}
+      </p>
+    </section>
   );
 }
 
@@ -343,8 +360,8 @@ function TaskExecutionPanel(props: {
         finished
           ? "Follow-up sent."
           : running
-            ? "Follow-up sent. Progress will update here."
-            : "Follow-up work started.",
+            ? "Follow-up queued. It will start after the current work finishes."
+            : "Follow-up queued.",
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -354,107 +371,93 @@ function TaskExecutionPanel(props: {
   }
 
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          <span>{finished ? "Task chat" : "AI work"}</span>
-          <Badge variant={props.execution.status === "failed" ? "destructive" : "secondary"}>
-            {executionStatusIcon(props.execution)}
-            {formatExecutionStatus(props.execution)}
-          </Badge>
-        </CardTitle>
-        <CardDescription>{formatExecutionWindow(props.execution)}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {!finished && (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-3 text-sm">
-              <span className="text-muted-foreground">Current step</span>
-              <span className="text-right font-medium">
-                {formatExecutionMessage(props.execution.progressSummary)}
-              </span>
-            </div>
-            <Progress value={executionProgress(props.execution)} />
+    <section
+      className="flex flex-col gap-4"
+      aria-label={finished ? "Task result" : "AI work"}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
+            <span>{finished ? "Task chat" : running ? "Running work" : "AI work"}</span>
+            <Badge variant={props.execution.status === "failed" ? "destructive" : "secondary"}>
+              {executionStatusIcon(props.execution)}
+              {formatExecutionStatus(props.execution)}
+            </Badge>
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {formatExecutionWindow(props.execution)}
+          </p>
+        </div>
+        {props.execution.model && <Badge variant="outline">{props.execution.model}</Badge>}
+      </div>
+
+      {!finished && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">Current step</span>
+            <span className="text-right font-medium">
+              {formatExecutionMessage(props.execution.progressSummary)}
+            </span>
           </div>
-        )}
+          <Progress value={executionProgress(props.execution)} />
+        </div>
+      )}
 
-        {props.execution.error && (
-          <Alert variant="destructive">
-            <AlertTriangle />
-            <AlertDescription>{props.execution.error}</AlertDescription>
-          </Alert>
-        )}
+      {props.execution.error && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertDescription>{props.execution.error}</AlertDescription>
+        </Alert>
+      )}
 
-        {props.execution.output && (
-          <Item variant="muted">
-            <ItemMedia variant="icon">
-              {finished ? <MessageSquareText /> : <CheckCircle2 />}
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>{finished ? "Assistant" : "Result"}</ItemTitle>
-              <MarkdownMessage>{props.execution.output}</MarkdownMessage>
-            </ItemContent>
-          </Item>
-        )}
+      <Separator />
+      <ExecutionInfo execution={props.execution} />
 
-        {props.execution.artifacts.length > 0 && (
-          <>
-            <Separator />
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">Artifacts</h3>
-              <ItemGroup>
-                {props.execution.artifacts.map((artifact) => (
-                  <ArtifactRow artifact={artifact} key={artifact.id} />
-                ))}
-              </ItemGroup>
-            </section>
-          </>
-        )}
+      <Separator />
+      <ExecutionResult execution={props.execution} />
 
-        {props.execution.events.length > 0 && (
-          <>
-            <Separator />
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">{finished ? "Work log" : "Progress"}</h3>
-              <ScrollArea className="max-h-72 pr-3">
-                <ItemGroup>
-                  {props.execution.events.map((event) => (
-                    <Item variant="outline" size="sm" key={event.id}>
-                      <ItemMedia variant="icon">
-                        {executionEventIcon(event.kind)}
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{formatEventTime(event.createdAt)}</ItemTitle>
-                        <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                          {formatExecutionMessage(event.message)}
-                        </p>
-                      </ItemContent>
-                    </Item>
-                  ))}
-                </ItemGroup>
-              </ScrollArea>
-            </section>
-          </>
-        )}
+      <Separator />
+      <ExecutionOutput execution={props.execution} />
 
-        {props.onAskFollowUp && (
-          <>
-            <Separator />
-            <FieldGroup>
-              {(notice || error) && (
-                <Alert variant={error ? "destructive" : "default"}>
-                  <MessageSquareText />
-                  <AlertDescription>{error ?? notice}</AlertDescription>
-                </Alert>
-              )}
-              <Field>
-                <FieldLabel htmlFor="task-follow-up">
-                  {running ? "Ask while it works" : "Ask a follow-up"}
-                </FieldLabel>
-                <Textarea
+      {props.execution.artifacts.length > 0 && (
+        <>
+          <Separator />
+          <section className="flex flex-col gap-2">
+            <h3 className="text-sm font-medium">Artifacts</h3>
+            <ItemGroup>
+              {props.execution.artifacts.map((artifact) => (
+                <ArtifactRow artifact={artifact} key={artifact.id} />
+              ))}
+            </ItemGroup>
+          </section>
+        </>
+      )}
+
+      {props.onAskFollowUp && (
+        <>
+          <Separator />
+          <FieldGroup>
+            {(notice || error) && (
+              <Alert variant={error ? "destructive" : "default"}>
+                <MessageSquareText />
+                <AlertDescription>{error ?? notice}</AlertDescription>
+              </Alert>
+            )}
+            <Field>
+              <FieldLabel htmlFor="task-follow-up">
+                {running ? "Ask while it works" : "Ask a follow-up"}
+              </FieldLabel>
+              <InputGroup className="min-h-28">
+                <InputGroupTextarea
                   id="task-follow-up"
                   value={followUp}
                   onChange={(event) => setFollowUp(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      void askFollowUp();
+                    }
+                  }}
                   placeholder={
                     running
                       ? "Add context, ask a question, or request a change."
@@ -462,29 +465,113 @@ function TaskExecutionPanel(props: {
                   }
                   className="min-h-24"
                 />
-                {!finished && (
-                  <FieldDescription>
-                    The new request stays attached to this task and appears in the progress log.
-                  </FieldDescription>
-                )}
-              </Field>
-              <Button
-                className="w-full sm:w-fit"
-                onClick={askFollowUp}
-                disabled={asking || !followUp.trim()}
-              >
-                {asking ? (
-                  <LoaderCircle className="animate-spin" data-icon="inline-start" />
-                ) : (
-                  <Send data-icon="inline-start" />
-                )}
-                {asking ? "Sending..." : "Send follow-up"}
-              </Button>
-            </FieldGroup>
-          </>
-        )}
-      </CardContent>
-    </Card>
+                <InputGroupAddon align="block-end" className="justify-between border-t">
+                  <InputGroupText>
+                    {running ? <Clock3 /> : <MessageSquareText />}
+                    <span>{running ? "Queues behind current work" : "Attached to task"}</span>
+                  </InputGroupText>
+                  <InputGroupButton
+                    type="button"
+                    variant="default"
+                    onClick={askFollowUp}
+                    disabled={asking || !followUp.trim()}
+                  >
+                    {asking ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <Send data-icon="inline-start" />
+                    )}
+                    {asking ? "Sending..." : "Send"}
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
+              {!finished && (
+                <FieldDescription>
+                  Follow-ups stay attached to this task and queue behind active work.
+                </FieldDescription>
+              )}
+            </Field>
+          </FieldGroup>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ExecutionInfo(props: { execution: TaskExecution }) {
+  const rows = [
+    { label: "Status", value: formatExecutionStatus(props.execution) },
+    { label: "Provider", value: formatProvider(props.execution.provider) },
+    { label: "Model", value: props.execution.model ?? "Default" },
+    {
+      label: "Started",
+      value: props.execution.startedAt ? formatEventTime(props.execution.startedAt) : "Not started",
+    },
+    {
+      label: props.execution.endedAt ? "Finished" : "Updated",
+      value: formatEventTime(props.execution.endedAt ?? props.execution.updatedAt),
+    },
+  ];
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Info</h3>
+      <dl className="grid gap-2 text-sm sm:grid-cols-2">
+        {rows.map((row) => (
+          <div className="min-w-0" key={row.label}>
+            <dt className="text-muted-foreground">{row.label}</dt>
+            <dd className="truncate font-medium">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function executionTerminalLines(execution: TaskExecution): string[] {
+  const lines = execution.events.map(
+    (event) => `[${formatEventTime(event.createdAt)}] ${formatExecutionMessage(event.message)}`,
+  );
+  if (execution.output.trim()) {
+    lines.push("", execution.output.trim());
+  } else if (execution.status === "queued") {
+    lines.push("", "Waiting for the current task run to finish.");
+  } else if (execution.status === "running") {
+    lines.push("", "Waiting for assistant output...");
+  }
+  if (execution.error) {
+    lines.push("", `error: ${execution.error}`);
+  }
+  return lines.length > 0 ? lines : ["No output yet."];
+}
+
+function ExecutionResult(props: { execution: TaskExecution }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Result</h3>
+      {props.execution.output.trim() ? (
+        <MarkdownMessage>{props.execution.output}</MarkdownMessage>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {props.execution.status === "queued" || props.execution.status === "running"
+            ? "No final result yet."
+            : "No result saved."}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function ExecutionOutput(props: { execution: TaskExecution }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Output</h3>
+      <ScrollArea className="max-h-72 rounded-lg border bg-muted">
+        <pre className="min-h-32 whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed text-muted-foreground">
+          {executionTerminalLines(props.execution).join("\n")}
+        </pre>
+      </ScrollArea>
+    </section>
   );
 }
 
@@ -540,19 +627,6 @@ function executionStatusIcon(execution: TaskExecution) {
   return <LoaderCircle className="animate-spin" data-icon="inline-start" />;
 }
 
-function executionEventIcon(kind: TaskExecution["events"][number]["kind"]) {
-  if (kind === "succeeded") {
-    return <CheckCircle2 />;
-  }
-  if (kind === "failed") {
-    return <AlertTriangle />;
-  }
-  if (kind === "queued") {
-    return <Clock3 />;
-  }
-  return <MessageSquareText />;
-}
-
 function executionProgress(execution: TaskExecution) {
   if (execution.status === "succeeded") return 100;
   if (execution.status === "failed") return 100;
@@ -571,6 +645,13 @@ function formatExecutionStatus(execution: TaskExecution) {
     return "Queued";
   }
   return "Running";
+}
+
+function formatProvider(provider: TaskExecution["provider"]) {
+  if (provider === "openai") {
+    return "OpenAI";
+  }
+  return "Local";
 }
 
 function formatExecutionWindow(execution: TaskExecution) {

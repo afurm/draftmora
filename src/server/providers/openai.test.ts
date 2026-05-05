@@ -136,6 +136,57 @@ describe("openAiProvider", () => {
     ).rejects.toThrow("assistantMsg.content.flatMap is not a function");
   });
 
+  it("passes saved OpenAI request configuration to the SDK", async () => {
+    let capturedOptions: unknown;
+    mocks.complete.mockImplementation(async (_model, _context, options) => {
+      capturedOptions = options;
+      return assistantMessage();
+    });
+
+    await openAiProvider.complete(
+      {
+        ...makeRequest([{ role: "user", content: "ship it" }]),
+        maxTokens: 1200,
+      },
+      {
+        ...auth,
+        authMode: "api_key",
+        source: "local",
+        baseUrl: "https://api.openai.com/v1",
+        headers: {
+          "OpenAI-Organization": "org_test",
+          "OpenAI-Project": "proj_test",
+        },
+        maxTokens: 4000,
+        temperature: 0.2,
+        reasoningEffort: "medium",
+        reasoningSummary: "concise",
+        textVerbosity: "high",
+        timeoutMs: 45_000,
+        maxRetries: 3,
+        maxRetryDelayMs: 10_000,
+        cacheRetention: "long",
+      },
+    );
+
+    expect(capturedOptions).toMatchObject({
+      apiKey: "test-token",
+      maxTokens: 1200,
+      temperature: 0.2,
+      reasoningEffort: "medium",
+      reasoningSummary: "concise",
+      textVerbosity: "high",
+      timeoutMs: 45_000,
+      maxRetries: 3,
+      maxRetryDelayMs: 10_000,
+      cacheRetention: "long",
+      headers: {
+        "OpenAI-Organization": "org_test",
+        "OpenAI-Project": "proj_test",
+      },
+    });
+  });
+
   it("allows tool-use responses through completeWithTools", async () => {
     mocks.complete.mockResolvedValue(assistantMessageWithToolCall());
 

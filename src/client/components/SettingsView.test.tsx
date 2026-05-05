@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSettings, OpenAiAuthState } from "../../shared/types";
+import type { AppSettings, OpenAiAuthState, ProviderConfigPatch } from "../../shared/types";
 import { SettingsView } from "./SettingsView";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -170,6 +170,80 @@ describe("SettingsView", () => {
     expect(container.querySelector('button[aria-label="Personal color"]')).toBeTruthy();
     expect(container.textContent).toContain("Connected as ...abc123.");
     expect(container.textContent).not.toContain("00000000-0000-0000");
+  });
+
+  it("saves advanced OpenAI request settings", async () => {
+    const onSave = vi.fn(
+      async (_nextSettings: AppSettings, _providerPatches: ProviderConfigPatch[]) => undefined,
+    );
+
+    await act(async () => {
+      root.render(
+        <SettingsView
+          settings={{
+            ...settings,
+            providerConfigs: [
+              {
+                ...settings.providerConfigs[0],
+                authMode: "api_key",
+                organizationId: "org_existing",
+              },
+            ],
+          }}
+          providerStatuses={[]}
+          onSave={onSave}
+          onStartOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAccountInfo={vi.fn(async () => ({
+            configured: false,
+            prefetchedAt: "2026-05-02T00:00:00.000Z",
+            recommendedModel: "gpt-5.5",
+            currentModel: "gpt-5.5",
+            currentModelSupported: true,
+            models: [],
+          }))}
+          onSubmitOpenAiAuthInput={vi.fn(async () => emptyAuthState)}
+          onLogoutOpenAiAuth={vi.fn(async () => emptyAuthState)}
+        />,
+      );
+    });
+
+    const maxTokensInput = container.querySelector<HTMLInputElement>("#openai-max-tokens");
+    const timeoutInput = container.querySelector<HTMLInputElement>("#openai-timeout");
+    const orgInput = container.querySelector<HTMLInputElement>("#openai-organization");
+    const projectInput = container.querySelector<HTMLInputElement>("#openai-project");
+    expect(maxTokensInput).toBeTruthy();
+    expect(timeoutInput).toBeTruthy();
+    expect(orgInput).toBeTruthy();
+    expect(projectInput).toBeTruthy();
+
+    await act(async () => {
+      setInputValue(maxTokensInput!, "8192");
+      maxTokensInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      setInputValue(timeoutInput!, "90000");
+      timeoutInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      setInputValue(orgInput!, "org_saved");
+      orgInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      setInputValue(projectInput!, "proj_saved");
+      projectInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Save OpenAI settings"),
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][1][0]).toMatchObject({
+      provider: "openai",
+      authMode: "api_key",
+      maxTokens: 8192,
+      timeoutMs: 90000,
+      organizationId: "org_saved",
+      projectId: "proj_saved",
+    });
   });
 });
 

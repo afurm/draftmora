@@ -9,6 +9,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -18,9 +19,21 @@ import type {
   FocusAreaColor,
   OpenAiAccountInfo,
   OpenAiAuthState,
+  OpenAiCacheRetention,
+  OpenAiCodexTransport,
+  OpenAiReasoningEffort,
+  OpenAiReasoningSummary,
+  OpenAiTextVerbosity,
   ProviderAuthMode,
   ProviderConfigPatch,
   ProviderStatus,
+} from "../../shared/types";
+import {
+  OPENAI_CACHE_RETENTIONS,
+  OPENAI_CODEX_TRANSPORTS,
+  OPENAI_REASONING_EFFORTS,
+  OPENAI_REASONING_SUMMARIES,
+  OPENAI_TEXT_VERBOSITIES,
 } from "../../shared/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +78,9 @@ import {
 } from "../focus-areas";
 
 const OPENAI_PROVIDER = "openai";
+const DEFAULT_OPTION = "default";
+
+type DefaultOption = typeof DEFAULT_OPTION;
 
 export function SettingsView(props: {
   settings: AppSettings;
@@ -102,6 +118,30 @@ export function SettingsView(props: {
   const [model, setModel] = useState(openAiConfig?.model ?? "gpt-5.5");
   const [baseUrl, setBaseUrl] = useState(openAiConfig?.baseUrl ?? "https://api.openai.com/v1");
   const [apiKey, setApiKey] = useState("");
+  const [organizationId, setOrganizationId] = useState(openAiConfig?.organizationId ?? "");
+  const [projectId, setProjectId] = useState(openAiConfig?.projectId ?? "");
+  const [maxTokens, setMaxTokens] = useState(openAiConfig?.maxTokens?.toString() ?? "");
+  const [temperature, setTemperature] = useState(openAiConfig?.temperature?.toString() ?? "");
+  const [reasoningEffort, setReasoningEffort] = useState<
+    OpenAiReasoningEffort | DefaultOption
+  >(openAiConfig?.reasoningEffort ?? DEFAULT_OPTION);
+  const [reasoningSummary, setReasoningSummary] = useState<
+    OpenAiReasoningSummary | DefaultOption
+  >(openAiConfig?.reasoningSummary ?? DEFAULT_OPTION);
+  const [textVerbosity, setTextVerbosity] = useState<
+    OpenAiTextVerbosity | DefaultOption
+  >(openAiConfig?.textVerbosity ?? DEFAULT_OPTION);
+  const [timeoutMs, setTimeoutMs] = useState(openAiConfig?.timeoutMs?.toString() ?? "");
+  const [maxRetries, setMaxRetries] = useState(openAiConfig?.maxRetries?.toString() ?? "");
+  const [maxRetryDelayMs, setMaxRetryDelayMs] = useState(
+    openAiConfig?.maxRetryDelayMs?.toString() ?? "",
+  );
+  const [cacheRetention, setCacheRetention] = useState<
+    OpenAiCacheRetention | DefaultOption
+  >(openAiConfig?.cacheRetention ?? DEFAULT_OPTION);
+  const [transport, setTransport] = useState<OpenAiCodexTransport>(
+    openAiConfig?.transport ?? "auto",
+  );
   const [authState, setAuthState] = useState<OpenAiAuthState | null>(null);
   const [accountInfo, setAccountInfo] = useState<OpenAiAccountInfo | null>(null);
   const [loginInput, setLoginInput] = useState("");
@@ -226,6 +266,18 @@ export function SettingsView(props: {
         model,
         baseUrl: authMode === "api_key" ? baseUrl : null,
         authMode,
+        maxTokens: parseOptionalNumber(maxTokens),
+        temperature: parseOptionalNumber(temperature),
+        reasoningEffort: optionalSelectValue(reasoningEffort),
+        reasoningSummary: optionalSelectValue(reasoningSummary),
+        textVerbosity: optionalSelectValue(textVerbosity),
+        timeoutMs: parseOptionalNumber(timeoutMs),
+        maxRetries: parseOptionalNumber(maxRetries),
+        maxRetryDelayMs: parseOptionalNumber(maxRetryDelayMs),
+        cacheRetention: optionalSelectValue(cacheRetention),
+        transport: authMode === "oauth" ? transport : null,
+        organizationId: authMode === "api_key" ? organizationId.trim() || null : null,
+        projectId: authMode === "api_key" ? projectId.trim() || null : null,
         enabled: true,
         fallbackRank: 1,
         apiKey: apiKey.trim() || undefined,
@@ -350,6 +402,26 @@ export function SettingsView(props: {
                   />
                   <FieldDescription>Default OpenAI-compatible endpoint.</FieldDescription>
                 </Field>
+                <Field>
+                  <FieldLabel htmlFor="openai-organization">Organization ID</FieldLabel>
+                  <Input
+                    id="openai-organization"
+                    value={organizationId}
+                    onChange={(event) => setOrganizationId(event.target.value)}
+                    placeholder="org_..."
+                  />
+                  <FieldDescription>Optional `OpenAI-Organization` request header.</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="openai-project">Project ID</FieldLabel>
+                  <Input
+                    id="openai-project"
+                    value={projectId}
+                    onChange={(event) => setProjectId(event.target.value)}
+                    placeholder="proj_..."
+                  />
+                  <FieldDescription>Optional `OpenAI-Project` request header.</FieldDescription>
+                </Field>
               </div>
             ) : (
               <OpenAiAccountPanel
@@ -364,6 +436,30 @@ export function SettingsView(props: {
                 onLogout={logoutOpenAi}
               />
             )}
+
+            <OpenAiAdvancedSettings
+              authMode={authMode}
+              maxTokens={maxTokens}
+              temperature={temperature}
+              reasoningEffort={reasoningEffort}
+              reasoningSummary={reasoningSummary}
+              textVerbosity={textVerbosity}
+              timeoutMs={timeoutMs}
+              maxRetries={maxRetries}
+              maxRetryDelayMs={maxRetryDelayMs}
+              cacheRetention={cacheRetention}
+              transport={transport}
+              onMaxTokensChange={setMaxTokens}
+              onTemperatureChange={setTemperature}
+              onReasoningEffortChange={setReasoningEffort}
+              onReasoningSummaryChange={setReasoningSummary}
+              onTextVerbosityChange={setTextVerbosity}
+              onTimeoutMsChange={setTimeoutMs}
+              onMaxRetriesChange={setMaxRetries}
+              onMaxRetryDelayMsChange={setMaxRetryDelayMs}
+              onCacheRetentionChange={setCacheRetention}
+              onTransportChange={setTransport}
+            />
           </FieldGroup>
         </CardContent>
         <CardFooter className="justify-end">
@@ -416,6 +512,218 @@ export function SettingsView(props: {
         </CardFooter>
       </Card>
     </section>
+  );
+}
+
+function OpenAiAdvancedSettings(props: {
+  authMode: ProviderAuthMode;
+  maxTokens: string;
+  temperature: string;
+  reasoningEffort: OpenAiReasoningEffort | DefaultOption;
+  reasoningSummary: OpenAiReasoningSummary | DefaultOption;
+  textVerbosity: OpenAiTextVerbosity | DefaultOption;
+  timeoutMs: string;
+  maxRetries: string;
+  maxRetryDelayMs: string;
+  cacheRetention: OpenAiCacheRetention | DefaultOption;
+  transport: OpenAiCodexTransport;
+  onMaxTokensChange: (value: string) => void;
+  onTemperatureChange: (value: string) => void;
+  onReasoningEffortChange: (value: OpenAiReasoningEffort | DefaultOption) => void;
+  onReasoningSummaryChange: (value: OpenAiReasoningSummary | DefaultOption) => void;
+  onTextVerbosityChange: (value: OpenAiTextVerbosity | DefaultOption) => void;
+  onTimeoutMsChange: (value: string) => void;
+  onMaxRetriesChange: (value: string) => void;
+  onMaxRetryDelayMsChange: (value: string) => void;
+  onCacheRetentionChange: (value: OpenAiCacheRetention | DefaultOption) => void;
+  onTransportChange: (value: OpenAiCodexTransport) => void;
+}) {
+  return (
+    <Item variant="outline" className="items-start">
+      <SlidersHorizontal />
+      <div className="grid w-full gap-4">
+        <div className="grid gap-1">
+          <ItemTitle>Advanced request settings</ItemTitle>
+          <ItemDescription className="line-clamp-none">
+            Tune the OpenAI request used by board work, chat, and memory review.
+          </ItemDescription>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <Field>
+            <FieldLabel htmlFor="openai-max-tokens">Max output tokens</FieldLabel>
+            <Input
+              id="openai-max-tokens"
+              type="number"
+              min={1}
+              value={props.maxTokens}
+              onChange={(event) => props.onMaxTokensChange(event.target.value)}
+              placeholder="Provider default"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="openai-temperature">Temperature</FieldLabel>
+            <Input
+              id="openai-temperature"
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={props.temperature}
+              onChange={(event) => props.onTemperatureChange(event.target.value)}
+              placeholder="Provider default"
+            />
+          </Field>
+          <Field>
+            <FieldLabel>Reasoning effort</FieldLabel>
+            <Select
+              value={props.reasoningEffort}
+              onValueChange={(value) =>
+                props.onReasoningEffortChange(value as OpenAiReasoningEffort | DefaultOption)
+              }
+            >
+              <SelectTrigger className="w-full" aria-label="Reasoning effort">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={DEFAULT_OPTION}>Provider default</SelectItem>
+                  {OPENAI_REASONING_EFFORTS.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {formatOptionLabel(value)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>Reasoning summary</FieldLabel>
+            <Select
+              value={props.reasoningSummary}
+              onValueChange={(value) =>
+                props.onReasoningSummaryChange(value as OpenAiReasoningSummary | DefaultOption)
+              }
+            >
+              <SelectTrigger className="w-full" aria-label="Reasoning summary">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={DEFAULT_OPTION}>Provider default</SelectItem>
+                  {OPENAI_REASONING_SUMMARIES.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {formatOptionLabel(value)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>Text verbosity</FieldLabel>
+            <Select
+              value={props.textVerbosity}
+              onValueChange={(value) =>
+                props.onTextVerbosityChange(value as OpenAiTextVerbosity | DefaultOption)
+              }
+            >
+              <SelectTrigger className="w-full" aria-label="Text verbosity">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={DEFAULT_OPTION}>Provider default</SelectItem>
+                  {OPENAI_TEXT_VERBOSITIES.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {formatOptionLabel(value)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>Prompt cache</FieldLabel>
+            <Select
+              value={props.cacheRetention}
+              onValueChange={(value) =>
+                props.onCacheRetentionChange(value as OpenAiCacheRetention | DefaultOption)
+              }
+            >
+              <SelectTrigger className="w-full" aria-label="Prompt cache">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={DEFAULT_OPTION}>Provider default</SelectItem>
+                  {OPENAI_CACHE_RETENTIONS.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {formatOptionLabel(value)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          {props.authMode === "oauth" && (
+            <Field>
+              <FieldLabel>Codex transport</FieldLabel>
+              <Select
+                value={props.transport}
+                onValueChange={(value) => props.onTransportChange(value as OpenAiCodexTransport)}
+              >
+                <SelectTrigger className="w-full" aria-label="Codex transport">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {OPENAI_CODEX_TRANSPORTS.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {formatOptionLabel(value)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+          <Field>
+            <FieldLabel htmlFor="openai-timeout">Timeout ms</FieldLabel>
+            <Input
+              id="openai-timeout"
+              type="number"
+              min={1000}
+              value={props.timeoutMs}
+              onChange={(event) => props.onTimeoutMsChange(event.target.value)}
+              placeholder="Provider default"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="openai-max-retries">Max retries</FieldLabel>
+            <Input
+              id="openai-max-retries"
+              type="number"
+              min={0}
+              max={10}
+              value={props.maxRetries}
+              onChange={(event) => props.onMaxRetriesChange(event.target.value)}
+              placeholder="Provider default"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="openai-retry-delay">Max retry delay ms</FieldLabel>
+            <Input
+              id="openai-retry-delay"
+              type="number"
+              min={0}
+              value={props.maxRetryDelayMs}
+              onChange={(event) => props.onMaxRetryDelayMsChange(event.target.value)}
+              placeholder="Provider default"
+            />
+          </Field>
+        </div>
+      </div>
+    </Item>
   );
 }
 
@@ -601,4 +909,24 @@ function normalizeFocusAreaDrafts(areas: FocusArea[]): FocusArea[] {
       };
     })
     .filter((area): area is FocusArea => Boolean(area));
+}
+
+function parseOptionalNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function optionalSelectValue<T extends string>(value: T | DefaultOption): T | null {
+  return value === DEFAULT_OPTION ? null : value;
+}
+
+function formatOptionLabel(value: string): string {
+  return value
+    .split(/[-_]/g)
+    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
+    .join(" ");
 }

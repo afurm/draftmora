@@ -5,6 +5,11 @@ import { createRequire } from "node:module";
 import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 import {
   FOCUS_AREA_COLORS,
+  OPENAI_CACHE_RETENTIONS,
+  OPENAI_CODEX_TRANSPORTS,
+  OPENAI_REASONING_EFFORTS,
+  OPENAI_REASONING_SUMMARIES,
+  OPENAI_TEXT_VERBOSITIES,
   PRIORITIES,
   PROVIDERS,
   TASK_STATUSES,
@@ -173,6 +178,11 @@ const TASK_STATUS_VALUES = new Set<string>(TASK_STATUSES);
 const PRIORITY_VALUES = new Set<string>(PRIORITIES);
 const PROVIDER_VALUES = new Set<string>(PROVIDERS);
 const FOCUS_AREA_COLOR_VALUES = new Set<string>(FOCUS_AREA_COLORS);
+const OPENAI_REASONING_EFFORT_VALUES = new Set<string>(OPENAI_REASONING_EFFORTS);
+const OPENAI_REASONING_SUMMARY_VALUES = new Set<string>(OPENAI_REASONING_SUMMARIES);
+const OPENAI_TEXT_VERBOSITY_VALUES = new Set<string>(OPENAI_TEXT_VERBOSITIES);
+const OPENAI_CACHE_RETENTION_VALUES = new Set<string>(OPENAI_CACHE_RETENTIONS);
+const OPENAI_CODEX_TRANSPORT_VALUES = new Set<string>(OPENAI_CODEX_TRANSPORTS);
 const TASK_EXECUTION_STATUS_VALUES = new Set<string>([
   "queued",
   "running",
@@ -595,6 +605,27 @@ export class BoardStore {
       : { baseUrl: defaultBaseUrl, source: "default" };
   }
 
+  resolveHeadersForProvider(provider: ProviderId): Record<string, string> | undefined {
+    if (provider !== "openai") {
+      return undefined;
+    }
+    const config = this.getStoredProviderConfigs().find((entry) => entry.provider === provider);
+    const organizationId =
+      firstNonEmptyString(process.env.OPENAI_ORG_ID, process.env.OPENAI_ORGANIZATION) ??
+      config?.organizationId;
+    const projectId =
+      firstNonEmptyString(process.env.OPENAI_PROJECT_ID, process.env.OPENAI_PROJECT) ??
+      config?.projectId;
+    const headers: Record<string, string> = {};
+    if (organizationId) {
+      headers["OpenAI-Organization"] = organizationId;
+    }
+    if (projectId) {
+      headers["OpenAI-Project"] = projectId;
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  }
+
   getOpenAiOAuthCredential(): OpenAiOAuthCredential | null {
     return normalizeOpenAiOAuthCredential(this.getSetting<OpenAiOAuthCredential>("openAiOAuth"));
   }
@@ -831,6 +862,78 @@ export class BoardStore {
               ? existing.baseUrl
               : patch.baseUrl.trim() || undefined,
         authMode: patch.authMode ?? existing.authMode,
+        maxTokens:
+          patch.maxTokens === null
+            ? undefined
+            : patch.maxTokens === undefined
+              ? existing.maxTokens
+              : normalizeIntegerInRange(patch.maxTokens, 1, 1_000_000),
+        temperature:
+          patch.temperature === null
+            ? undefined
+            : patch.temperature === undefined
+              ? existing.temperature
+              : normalizeNumberInRange(patch.temperature, 0, 2),
+        reasoningEffort:
+          patch.reasoningEffort === null
+            ? undefined
+            : patch.reasoningEffort === undefined
+              ? existing.reasoningEffort
+              : normalizeOpenAiReasoningEffort(patch.reasoningEffort),
+        reasoningSummary:
+          patch.reasoningSummary === null
+            ? undefined
+            : patch.reasoningSummary === undefined
+              ? existing.reasoningSummary
+              : normalizeOpenAiReasoningSummary(patch.reasoningSummary),
+        textVerbosity:
+          patch.textVerbosity === null
+            ? undefined
+            : patch.textVerbosity === undefined
+              ? existing.textVerbosity
+              : normalizeOpenAiTextVerbosity(patch.textVerbosity),
+        timeoutMs:
+          patch.timeoutMs === null
+            ? undefined
+            : patch.timeoutMs === undefined
+              ? existing.timeoutMs
+              : normalizeIntegerInRange(patch.timeoutMs, 1_000, 3_600_000),
+        maxRetries:
+          patch.maxRetries === null
+            ? undefined
+            : patch.maxRetries === undefined
+              ? existing.maxRetries
+              : normalizeIntegerInRange(patch.maxRetries, 0, 10),
+        maxRetryDelayMs:
+          patch.maxRetryDelayMs === null
+            ? undefined
+            : patch.maxRetryDelayMs === undefined
+              ? existing.maxRetryDelayMs
+              : normalizeIntegerInRange(patch.maxRetryDelayMs, 0, 600_000),
+        cacheRetention:
+          patch.cacheRetention === null
+            ? undefined
+            : patch.cacheRetention === undefined
+              ? existing.cacheRetention
+              : normalizeOpenAiCacheRetention(patch.cacheRetention),
+        transport:
+          patch.transport === null
+            ? undefined
+            : patch.transport === undefined
+              ? existing.transport
+              : normalizeOpenAiCodexTransport(patch.transport),
+        organizationId:
+          patch.organizationId === null
+            ? undefined
+            : patch.organizationId === undefined
+              ? existing.organizationId
+              : normalizeOptionalString(patch.organizationId),
+        projectId:
+          patch.projectId === null
+            ? undefined
+            : patch.projectId === undefined
+              ? existing.projectId
+              : normalizeOptionalString(patch.projectId),
         enabled: patch.enabled ?? existing.enabled,
         fallbackRank: patch.fallbackRank ?? existing.fallbackRank,
         apiKey:
@@ -856,7 +959,20 @@ export class BoardStore {
         provider: entry.provider,
         label: entry.label?.trim() || fallback.label,
         model: entry.model?.trim() || fallback.model,
+        baseUrl: entry.baseUrl?.trim() || fallback.baseUrl,
         authMode: entry.authMode === "api_key" ? "api_key" : "oauth",
+        maxTokens: normalizeIntegerInRange(entry.maxTokens, 1, 1_000_000),
+        temperature: normalizeNumberInRange(entry.temperature, 0, 2),
+        reasoningEffort: normalizeOpenAiReasoningEffort(entry.reasoningEffort),
+        reasoningSummary: normalizeOpenAiReasoningSummary(entry.reasoningSummary),
+        textVerbosity: normalizeOpenAiTextVerbosity(entry.textVerbosity),
+        timeoutMs: normalizeIntegerInRange(entry.timeoutMs, 1_000, 3_600_000),
+        maxRetries: normalizeIntegerInRange(entry.maxRetries, 0, 10),
+        maxRetryDelayMs: normalizeIntegerInRange(entry.maxRetryDelayMs, 0, 600_000),
+        cacheRetention: normalizeOpenAiCacheRetention(entry.cacheRetention),
+        transport: normalizeOpenAiCodexTransport(entry.transport),
+        organizationId: normalizeOptionalString(entry.organizationId),
+        projectId: normalizeOptionalString(entry.projectId),
         enabled: entry.enabled ?? fallback.enabled,
         fallbackRank: Number.isFinite(entry.fallbackRank)
           ? entry.fallbackRank
@@ -1118,6 +1234,76 @@ function normalizeTags(tags: string[] | undefined): string[] {
 
 function normalizeStringList(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
+
+function firstNonEmptyString(...values: Array<string | undefined>): string | undefined {
+  return values.map((value) => value?.trim()).find((value): value is string => Boolean(value));
+}
+
+function normalizeIntegerInRange(
+  value: number | null | undefined,
+  min: number,
+  max: number,
+): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function normalizeNumberInRange(
+  value: number | null | undefined,
+  min: number,
+  max: number,
+): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeOpenAiReasoningEffort(
+  value: string | null | undefined,
+): StoredProviderConfig["reasoningEffort"] {
+  return OPENAI_REASONING_EFFORT_VALUES.has(value ?? "")
+    ? (value as StoredProviderConfig["reasoningEffort"])
+    : undefined;
+}
+
+function normalizeOpenAiReasoningSummary(
+  value: string | null | undefined,
+): StoredProviderConfig["reasoningSummary"] {
+  return OPENAI_REASONING_SUMMARY_VALUES.has(value ?? "")
+    ? (value as StoredProviderConfig["reasoningSummary"])
+    : undefined;
+}
+
+function normalizeOpenAiTextVerbosity(
+  value: string | null | undefined,
+): StoredProviderConfig["textVerbosity"] {
+  return OPENAI_TEXT_VERBOSITY_VALUES.has(value ?? "")
+    ? (value as StoredProviderConfig["textVerbosity"])
+    : undefined;
+}
+
+function normalizeOpenAiCacheRetention(
+  value: string | null | undefined,
+): StoredProviderConfig["cacheRetention"] {
+  return OPENAI_CACHE_RETENTION_VALUES.has(value ?? "")
+    ? (value as StoredProviderConfig["cacheRetention"])
+    : undefined;
+}
+
+function normalizeOpenAiCodexTransport(
+  value: string | null | undefined,
+): StoredProviderConfig["transport"] {
+  return OPENAI_CODEX_TRANSPORT_VALUES.has(value ?? "")
+    ? (value as StoredProviderConfig["transport"])
+    : undefined;
 }
 
 function normalizeExecutionEvents(

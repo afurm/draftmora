@@ -7,7 +7,11 @@ import type {
 } from "../shared/types";
 import type { BoardStore } from "./db";
 import { executeLocalToolCall, LOCAL_AGENT_TOOLS } from "./local-agent-tools";
-import { buildMemoryContextBlock } from "./memory";
+import {
+  buildMemoryContextBlock,
+  reviewAndApplyMemory,
+  type MemoryReviewLogger,
+} from "./memory";
 import type { ProviderRouter } from "./providers/router";
 import { redactedErrorMessage } from "./redaction";
 
@@ -21,6 +25,7 @@ type StartTaskExecutionInput = {
   prompt?: string;
   runInline?: boolean;
   memoryRoot?: string;
+  memoryLogger?: MemoryReviewLogger;
 };
 
 export async function startTaskExecutionForTask(
@@ -119,6 +124,19 @@ async function startExecution(
         ],
       });
       input.store.updateTask(input.task.id, { status: "done" });
+      await reviewAndApplyMemory({
+        providerRouter: input.router,
+        provider: input.provider,
+        model: config.model,
+        messages: [
+          { role: "user", content: input.prompt },
+          { role: "assistant", content: result || "Finished." },
+        ],
+        query: input.prompt,
+        memoryRoot: input.memoryRoot,
+        source: "task",
+        logger: input.memoryLogger,
+      });
     } catch (err) {
       const failureMessage = redactedErrorMessage(err);
       const handoff = buildFailureHandoff({
@@ -231,7 +249,7 @@ function extractToolCalls(message: AssistantMessage): ToolCall[] {
   return message.content.filter((block): block is ToolCall => block.type === "toolCall");
 }
 
-function buildTaskSystemPrompt(
+export function buildTaskSystemPrompt(
   prompt: string,
   boardContext: string,
   memoryRoot?: string,
@@ -245,7 +263,7 @@ function buildTaskSystemPrompt(
     "Do not claim a file was changed, command passed, or website is live unless a local tool result confirms it. If you are blocked, explain the exact blocker and the next task or setup needed.",
     "When a local tool call succeeds, use that result instead of repeating the same tool call with the same arguments. Re-check only when a later change could have invalidated the result.",
     "After a validation command passes, stop using tools and return the final task summary immediately. If validation fails, fix the specific failure, rerun the same validation once, then summarize the result.",
-    "You have local persistent memory. Use recalled memory only when it is relevant to the task. If the user explicitly asks you to remember a durable fact, state that it was saved to durable memory.",
+    "You have local persistent memory. Use recalled memory only when it is relevant to the task. A separate memory-review pass may save durable facts after successful task execution; do not claim anything was saved unless the relevant fact is already present in the recalled memory context.",
     boardContext,
     memoryContext,
   ]

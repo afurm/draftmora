@@ -13,9 +13,9 @@ import {
 } from "../shared/types";
 import { BoardStore } from "./db";
 import {
-  appendMemoryEntry,
   buildMemoryContextBlock,
-  createExplicitMemoryEntry,
+  reviewAndApplyMemory,
+  type MemoryReviewLogger,
 } from "./memory";
 import {
   clearOpenAiOAuthLogin,
@@ -158,6 +158,9 @@ export function buildServer(options: {
   const providerRouter = options.providerRouter ?? new ProviderRouter(store);
   const memoryRoot = options.memoryRoot ?? process.cwd();
   const app = Fastify({ logger: false });
+  const memoryReviewLogger: MemoryReviewLogger = {
+    warn: (message) => console.warn(message),
+  };
 
   void app.register(cors, {
     origin: true,
@@ -218,6 +221,8 @@ export function buildServer(options: {
       provider: store.getSettings().selectedProvider,
       followUp: input.prompt,
       runInline: options.runTaskExecutionsInline,
+      memoryRoot,
+      memoryLogger: memoryReviewLogger,
     });
     const latestTask = store.getTask(followUpTask.id) ?? followUpTask;
     return reply.status(201).send({
@@ -294,12 +299,9 @@ export function buildServer(options: {
       role: userTurn.role,
       content: userTurn.content,
     });
-    const memoryEntry = createExplicitMemoryEntry(userTurn.content);
-    if (memoryEntry) {
-      appendMemoryEntry(memoryRoot, memoryEntry.target, memoryEntry.content);
-    }
     const provider = store.getSettings().selectedProvider as ProviderId;
     const config = store.getProviderConfig(provider);
+    await reviewAndSaveMemory(userTurn.content, conversation.id, provider, config.model);
     const history = store.listAssistantChatMessages(conversation.id, 24);
     const result = await providerRouter.complete({
       provider,
@@ -359,6 +361,31 @@ export function buildServer(options: {
       provider: store.getSettings().selectedProvider as ProviderId,
       runInline: options.runTaskExecutionsInline,
       memoryRoot,
+      memoryLogger: memoryReviewLogger,
+    });
+  }
+
+  async function reviewAndSaveMemory(
+    userMessage: string,
+    conversationId: string,
+    provider: ProviderId,
+    model: string,
+  ): Promise<void> {
+    const messages = store
+      .listAssistantChatMessages(conversationId, 12)
+      .map((message) => ({ role: message.role, content: message.content }));
+    if (!messages.some((message) => message.role === "user" && message.content === userMessage)) {
+      messages.push({ role: "user", content: userMessage });
+    }
+    await reviewAndApplyMemory({
+      providerRouter,
+      provider,
+      model,
+      messages,
+      query: userMessage,
+      memoryRoot,
+      source: "chat",
+      logger: memoryReviewLogger,
     });
   }
 
@@ -405,7 +432,7 @@ function buildAssistantChatSystemPrompt(
     "When proposing board changes, append one fenced code block with language draftmora-actions and JSON shaped as {\"actions\":[...]} after the readable answer.",
     "Allowed action types are create_task with task, update_task with taskId and patch, and move_task with taskId and status. Use only task IDs shown in Active tasks for update_task or move_task.",
     "Keep proposal JSON out of the prose. Do not include more than 6 actions.",
-    "You have persistent local memory. Use recalled memory only when it is relevant. If the user explicitly asks you to remember something, tell them it was saved to durable memory.",
+    "You have persistent local memory. Use recalled memory only when it is relevant. Do not claim a fact was saved unless the relevant fact is present in the recalled memory context.",
     "Do not claim to create, update, delete, or move tasks. If the user asks for that, provide the exact task details to add or change.",
     `Focus areas: ${focusAreas || "none"}.`,
     `Board counts: draft ${counts.draft}, ready ${counts.ready}, in progress ${counts.in_progress}, needs attention ${counts.needs_attention}, done ${counts.done}.`,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "../shared/types";
-import { buildBoardTaskContext } from "./task-executor";
+import { buildBoardTaskContext, buildTaskSystemPrompt } from "./task-executor";
 
 describe("task executor board context", () => {
   it("passes task notes and neighboring task outputs as model context", () => {
@@ -34,6 +34,18 @@ describe("task executor board context", () => {
     expect(context).toContain("Accepted scope: use the customer brief");
     expect(context).toContain("Upcoming tasks:");
     expect(context).toContain("[03 PM] Decide next action");
+  });
+
+  it("does not tell task execution to claim unsaved memory", () => {
+    const prompt = buildTaskSystemPrompt(
+      "Remember the release workflow.",
+      "<board-context></board-context>",
+      "/tmp/draftmora-empty-memory",
+    );
+
+    expect(prompt).toContain("separate memory-review pass");
+    expect(prompt).toContain("do not claim anything was saved");
+    expect(prompt).not.toContain("state that it was saved to durable memory");
   });
 });
 

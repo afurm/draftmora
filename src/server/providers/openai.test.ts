@@ -171,7 +171,7 @@ describe("openAiProvider", () => {
 
     expect(capturedOptions).toMatchObject({
       apiKey: "test-token",
-      maxTokens: 1200,
+      maxTokens: 4000,
       temperature: 0.2,
       reasoningEffort: "medium",
       reasoningSummary: "concise",

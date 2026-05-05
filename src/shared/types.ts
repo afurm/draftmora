@@ -25,12 +25,7 @@ export const OPENAI_REASONING_EFFORTS = [
 export const OPENAI_REASONING_SUMMARIES = ["auto", "concise", "detailed"] as const;
 export const OPENAI_TEXT_VERBOSITIES = ["low", "medium", "high"] as const;
 export const OPENAI_CACHE_RETENTIONS = ["none", "short", "long"] as const;
-export const OPENAI_CODEX_TRANSPORTS = [
-  "auto",
-  "sse",
-  "websocket",
-  "websocket-cached",
-] as const;
+export const OPENAI_CODEX_TRANSPORTS = ["auto", "sse", "websocket"] as const;
 export const FOCUS_AREA_COLORS = [
   "blue",
   "emerald",

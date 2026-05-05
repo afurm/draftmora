@@ -86,14 +86,20 @@ Copy `.env.example` to `.env` when you need local overrides:
 cp .env.example .env
 ```
 
-Supported environment variables:
+Example local override:
 
 ```bash
-PORT=4141
+WEB_PORT=3000
+API_PORT=3001
 BOARD_DB_PATH=./data/board.db
 OPENAI_API_KEY=
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
+
+`WEB_PORT` controls the Vite dev and preview server. `API_PORT` controls the
+Fastify API and the packaged `npx draftmora` server. Without these variables,
+the dev web server uses `5173` and the API uses `4141`. The older `PORT`
+variable still works as an API port fallback when `API_PORT` is not set.
 
 Open Settings in the app to choose an auth mode:
 

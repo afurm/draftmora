@@ -7,6 +7,7 @@ import {
   Link2,
   LoaderCircle,
   MessageSquareText,
+  Plus,
   Send,
   Trash2,
 } from "lucide-react";
@@ -73,6 +74,7 @@ export function TaskModal(props: {
   onClose: () => void;
   onDelete?: () => Promise<void>;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
   onSave: (input: TaskCreateInput) => Promise<void>;
 }) {
   const [title, setTitle] = useState(props.task.title);
@@ -138,7 +140,11 @@ export function TaskModal(props: {
 
         {finished ? (
           <>
-            <FinishedTaskContent task={props.task} onAskFollowUp={props.onAskFollowUp} />
+            <FinishedTaskContent
+              task={props.task}
+              onAskFollowUp={props.onAskFollowUp}
+              onCreateDraft={props.onCreateDraft}
+            />
             <DialogFooter>
               <Button variant="outline" onClick={props.onClose}>
                 Close
@@ -235,8 +241,10 @@ export function TaskModal(props: {
 
             {props.task.execution && (
               <TaskExecutionPanel
+                task={props.task}
                 execution={props.task.execution}
                 onAskFollowUp={props.onAskFollowUp}
+                onCreateDraft={props.onCreateDraft}
               />
             )}
 
@@ -267,6 +275,7 @@ export function TaskModal(props: {
 function FinishedTaskContent(props: {
   task: Task;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
 }) {
   const notes = props.task.description.trim();
 
@@ -275,8 +284,10 @@ function FinishedTaskContent(props: {
       <div className="flex flex-col gap-4">
         <TaskNotes notes={notes} />
         <TaskExecutionPanel
+          task={props.task}
           execution={props.task.execution}
           onAskFollowUp={props.onAskFollowUp}
+          onCreateDraft={props.onCreateDraft}
           mode="finished"
         />
       </div>
@@ -333,12 +344,16 @@ function FocusAreaOption(props: { area: FocusArea }) {
 }
 
 function TaskExecutionPanel(props: {
+  task: Task;
   execution: TaskExecution;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
   mode?: "active" | "finished";
 }) {
   const [followUp, setFollowUp] = useState("");
   const [asking, setAsking] = useState(false);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [nextActionConsumed, setNextActionConsumed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const finished = props.mode === "finished";
@@ -354,8 +369,14 @@ function TaskExecutionPanel(props: {
     }
   }, [props.execution.status]);
 
-  async function askFollowUp() {
-    const prompt = followUp.trim();
+  const nextAction = useMemo(() => extractExecutionNextAction(props.execution), [props.execution]);
+
+  useEffect(() => {
+    setNextActionConsumed(false);
+  }, [nextAction]);
+
+  async function askFollowUp(promptOverride?: string) {
+    const prompt = (promptOverride ?? followUp).trim();
     if (!prompt || !props.onAskFollowUp) {
       return;
     }
@@ -364,7 +385,12 @@ function TaskExecutionPanel(props: {
     setError(null);
     try {
       await props.onAskFollowUp(prompt);
-      setFollowUp("");
+      if (!promptOverride) {
+        setFollowUp("");
+      }
+      if (promptOverride) {
+        setNextActionConsumed(true);
+      }
       setNotice(
         finished
           ? "Follow-up sent."
@@ -376,6 +402,39 @@ function TaskExecutionPanel(props: {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setAsking(false);
+    }
+  }
+
+  async function runNextActionAsFollowUp() {
+    if (!nextAction) {
+      return;
+    }
+    await askFollowUp(formatNextActionFollowUpPrompt(props.task, props.execution, nextAction));
+  }
+
+  async function createDraftFromNextAction() {
+    if (!nextAction || !props.onCreateDraft) {
+      return;
+    }
+    setCreatingDraft(true);
+    setNotice(null);
+    setError(null);
+    try {
+      await props.onCreateDraft({
+        title: formatNextActionTaskTitle(nextAction),
+        description: formatNextActionTaskDescription(props.task, props.execution, nextAction),
+        status: "draft",
+        priority: props.task.priority,
+        focusAreaId: props.task.focusAreaId,
+        tags: [],
+        providerSource: "local",
+      });
+      setNextActionConsumed(true);
+      setNotice("Draft task created.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreatingDraft(false);
     }
   }
 
@@ -432,6 +491,61 @@ function TaskExecutionPanel(props: {
         </>
       ) : null}
 
+      {(notice || error) && (
+        <Alert variant={error ? "destructive" : "default"}>
+          <MessageSquareText />
+          <AlertDescription>{error ?? notice}</AlertDescription>
+        </Alert>
+      )}
+
+      {nextAction && (props.onAskFollowUp || props.onCreateDraft) && (
+        <>
+          <Separator />
+          <section className="flex min-w-0 flex-col gap-2" aria-label="Next action">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-medium">Next action</h3>
+                <p className="mt-1 break-words text-sm text-muted-foreground">{nextAction}</p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                {props.onAskFollowUp && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void runNextActionAsFollowUp()}
+                    disabled={asking || creatingDraft || nextActionConsumed}
+                  >
+                    {asking ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <MessageSquareText data-icon="inline-start" />
+                    )}
+                    {asking ? "Sending..." : "Run as follow-up"}
+                  </Button>
+                )}
+                {props.onCreateDraft && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void createDraftFromNextAction()}
+                    disabled={asking || creatingDraft || nextActionConsumed}
+                  >
+                    {creatingDraft ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <Plus data-icon="inline-start" />
+                    )}
+                    {creatingDraft ? "Creating..." : "Draft task"}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+
       {props.execution.artifacts.length > 0 && (
         <>
           <Separator />
@@ -450,12 +564,6 @@ function TaskExecutionPanel(props: {
         <>
           <Separator />
           <FieldGroup>
-            {(notice || error) && (
-              <Alert variant={error ? "destructive" : "default"}>
-                <MessageSquareText />
-                <AlertDescription>{error ?? notice}</AlertDescription>
-              </Alert>
-            )}
             <Field>
               <FieldLabel htmlFor="task-follow-up">
                 {running ? "Ask while it works" : "Ask a follow-up"}
@@ -486,7 +594,7 @@ function TaskExecutionPanel(props: {
                   <InputGroupButton
                     type="button"
                     variant="default"
-                    onClick={askFollowUp}
+                    onClick={() => void askFollowUp()}
                     disabled={asking || !followUp.trim()}
                   >
                     {asking ? (
@@ -605,6 +713,131 @@ function PreviousExecutionResults(props: { executions: TaskExecution[] }) {
       </ScrollArea>
     </section>
   );
+}
+
+function extractExecutionNextAction(execution: TaskExecution) {
+  const outputs = [
+    execution.output,
+    ...(execution.previousExecutions ?? []).slice().reverse().map((previous) => previous.output),
+  ];
+  for (const output of outputs) {
+    const nextAction = extractNextAction(output);
+    if (nextAction) {
+      return nextAction;
+    }
+  }
+  return null;
+}
+
+function extractNextAction(output: string) {
+  const lines = output.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (isNextActionHeading(lines[index])) {
+      const nextAction = firstNextActionLine(lines.slice(index + 1));
+      if (nextAction) {
+        return nextAction;
+      }
+    }
+  }
+
+  for (const line of lines) {
+    const inlineMatch = line.match(
+      /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:next actions?|next steps?|what(?:'s| is) next)\s*(?:\*\*)?\s*[:：-]\s*(.+)$/i,
+    );
+    if (inlineMatch?.[1]) {
+      return normalizeNextActionLine(inlineMatch[1]);
+    }
+  }
+
+  return null;
+}
+
+function isNextActionHeading(line: string) {
+  return /^#{1,6}\s*(?:next actions?|next steps?|what(?:'s| is) next)\b/i.test(line.trim());
+}
+
+function firstNextActionLine(lines: string[]) {
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^#{1,6}\s+/.test(trimmed)) {
+      return null;
+    }
+    if (!trimmed || trimmed === "---" || trimmed.startsWith("```")) {
+      continue;
+    }
+    return normalizeNextActionLine(trimmed);
+  }
+  return null;
+}
+
+function normalizeNextActionLine(line: string) {
+  const normalized = line
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
+    .replace(/^\[[ xX]\]\s+/, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_`]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || null;
+}
+
+function formatNextActionFollowUpPrompt(
+  task: Task,
+  execution: TaskExecution,
+  nextAction: string,
+) {
+  return [
+    "Please continue with the next action below.",
+    "Treat this as the full task context if no other state is available.",
+    formatNextActionContext(task, execution, nextAction),
+  ].join("\n\n");
+}
+
+function formatNextActionTaskTitle(nextAction: string) {
+  if (nextAction.length <= 96) {
+    return nextAction;
+  }
+  const shortened = nextAction.slice(0, 93).trimEnd();
+  const lastSpace = shortened.lastIndexOf(" ");
+  return `${lastSpace > 48 ? shortened.slice(0, lastSpace) : shortened}...`;
+}
+
+function formatNextActionTaskDescription(
+  task: Task,
+  execution: TaskExecution,
+  nextAction: string,
+) {
+  return [
+    "Drafted from an existing task result. This note includes the needed context so the task can stand alone.",
+    formatNextActionContext(task, execution, nextAction),
+  ].join("\n\n");
+}
+
+function formatNextActionContext(task: Task, execution: TaskExecution, nextAction: string) {
+  const sections = [
+    "## Source task",
+    `Title: ${task.title || "Untitled task"}`,
+    `Status: ${COLUMN_LABELS[task.status]}`,
+    `Priority: ${task.priority}`,
+    task.description.trim() ? `Notes:\n${task.description.trim()}` : "Notes: None saved.",
+    execution.output.trim() ? `## Latest result\n${execution.output.trim()}` : null,
+    formatPreviousResultContext(execution.previousExecutions ?? []),
+    `## Next action to complete\n${nextAction}`,
+  ];
+  return sections.filter(Boolean).join("\n\n");
+}
+
+function formatPreviousResultContext(executions: TaskExecution[]) {
+  const previousResults = executions
+    .filter((execution) => execution.output.trim())
+    .map((execution, index) => `### Previous result ${index + 1}\n${execution.output.trim()}`);
+  if (previousResults.length === 0) {
+    return null;
+  }
+  return [
+    "## Previous results",
+    ...previousResults,
+  ].join("\n\n");
 }
 
 function ExecutionOutput(props: {

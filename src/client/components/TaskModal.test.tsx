@@ -96,6 +96,83 @@ describe("TaskModal", () => {
     expect(document.body.textContent).toContain("Waiting for assistant output...");
   });
 
+  it("runs a next action as a scoped follow-up", async () => {
+    const onAskFollowUp = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "succeeded",
+          output: "Work completed.\n\n## Next action\n- Check CI results and fix failures.",
+          previousExecutions: [
+            execution({
+              id: "execution-previous",
+              output: "Previous result: PR was opened.",
+            }),
+          ],
+        }),
+      },
+      { onAskFollowUp },
+    );
+
+    expect(document.body.textContent).toContain("Next action");
+    expect(document.body.textContent).toContain("Check CI results and fix failures.");
+
+    await clickButton("Run as follow-up");
+
+    const prompt = onAskFollowUp.mock.calls[0]?.[0] ?? "";
+    expect(prompt).toContain("Treat this as the full task context");
+    expect(prompt).toContain("## Source task");
+    expect(prompt).toContain("Title: Find Lviv");
+    expect(prompt).toContain("Status: In Progress");
+    expect(prompt).toContain("Notes:\nWhere is Lviv located?");
+    expect(prompt).toContain("## Latest result");
+    expect(prompt).toContain("Work completed.");
+    expect(prompt).toContain("## Previous results");
+    expect(prompt).toContain("Previous result: PR was opened.");
+    expect(prompt).toContain("## Next action to complete\nCheck CI results and fix failures.");
+    expect(getButton("Run as follow-up").disabled).toBe(true);
+    expect(getButton("Draft task").disabled).toBe(true);
+  });
+
+  it("creates a draft task from a next action", async () => {
+    const onCreateDraft = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "succeeded",
+          output: "Work completed.\n\n**Next action:** Draft the release checklist.",
+        }),
+      },
+      { onCreateDraft },
+    );
+
+    await clickButton("Draft task");
+
+    expect(onCreateDraft).toHaveBeenCalledWith({
+      title: "Draft the release checklist.",
+      description: expect.stringContaining(
+        "Drafted from an existing task result. This note includes the needed context so the task can stand alone.",
+      ),
+      status: "draft",
+      priority: "medium",
+      focusAreaId: null,
+      tags: [],
+      providerSource: "local",
+    });
+    const draftInput = onCreateDraft.mock.calls[0]?.[0];
+    expect(draftInput?.description).toContain("## Source task");
+    expect(draftInput?.description).toContain("Title: Find Lviv");
+    expect(draftInput?.description).toContain("Status: In Progress");
+    expect(draftInput?.description).toContain("Priority: medium");
+    expect(draftInput?.description).toContain("Notes:\nWhere is Lviv located?");
+    expect(draftInput?.description).toContain("## Latest result");
+    expect(draftInput?.description).toContain("## Next action to complete\nDraft the release checklist.");
+    expect(getButton("Run as follow-up").disabled).toBe(true);
+    expect(getButton("Draft task").disabled).toBe(true);
+  });
+
   it("labels editable select controls for assistive technology", async () => {
     await renderTaskModal(task());
 
@@ -105,7 +182,10 @@ describe("TaskModal", () => {
   });
 });
 
-async function renderTaskModal(task: Task) {
+async function renderTaskModal(
+  task: Task,
+  overrides: Partial<Parameters<typeof TaskModal>[0]> = {},
+) {
   await act(async () => {
     root.render(
       <TaskModal
@@ -115,10 +195,27 @@ async function renderTaskModal(task: Task) {
         onClose={vi.fn()}
         onDelete={vi.fn()}
         onAskFollowUp={vi.fn()}
+        onCreateDraft={vi.fn()}
         onSave={vi.fn()}
+        {...overrides}
       />,
     );
   });
+}
+
+async function clickButton(label: string) {
+  const button = getButton(label);
+  await act(async () => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+function getButton(label: string) {
+  const button = Array.from(document.body.querySelectorAll("button")).find(
+    (element) => element.textContent === label,
+  );
+  expect(button).toBeTruthy();
+  return button as HTMLButtonElement;
 }
 
 function task(): Task {

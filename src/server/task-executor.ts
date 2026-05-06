@@ -16,7 +16,16 @@ import type { ProviderRouter } from "./providers/router";
 import { redactedErrorMessage } from "./redaction";
 
 const MAX_LOCAL_TOOL_ROUNDS = 24;
+const CANCELLED_BY_USER_MESSAGE = "Cancelled by user.";
+const CANCELLED_PROGRESS_SUMMARY = "Work cancelled.";
 const taskExecutionQueues = new Map<string, Promise<void>>();
+const activeTaskExecutionRuns = new Map<string, TaskExecutionRunRecord>();
+
+type TaskExecutionRunRecord = {
+  taskId: string;
+  executionId: string;
+  controller: AbortController;
+};
 
 type StartTaskExecutionInput = {
   store: BoardStore;
@@ -53,6 +62,55 @@ export async function startTaskFollowUpExecutionForTask(
   });
 }
 
+type AbortTaskExecutionResult =
+  | { found: false; cancelled: false; reason: string }
+  | {
+      found: true;
+      cancelled: boolean;
+      reason?: string;
+      task: Task;
+      execution?: TaskExecution;
+    };
+
+export function abortTaskExecutionForTask(input: {
+  store: BoardStore;
+  taskId: string;
+}): AbortTaskExecutionResult {
+  const task = input.store.getTask(input.taskId);
+  if (!task) {
+    return { found: false, cancelled: false, reason: "Task not found." };
+  }
+  const executions = getAbortableExecutions(input.store, input.taskId);
+  if (executions.length === 0) {
+    return {
+      found: true,
+      cancelled: false,
+      reason: "No active task run to cancel.",
+      task,
+    };
+  }
+  const cancelledExecutions = executions
+    .map((execution) => {
+      activeTaskExecutionRuns
+        .get(execution.id)
+        ?.controller.abort(new Error(CANCELLED_BY_USER_MESSAGE));
+      return markTaskExecutionCancelled({
+        store: input.store,
+        task,
+        executionId: execution.id,
+        events: execution.events,
+      });
+    })
+    .filter((execution): execution is TaskExecution => Boolean(execution));
+  const updatedTask = input.store.getTask(task.id) ?? task;
+  return {
+    found: true,
+    cancelled: true,
+    task: updatedTask,
+    execution: updatedTask.execution ?? cancelledExecutions[0],
+  };
+}
+
 async function startExecution(
   input: StartTaskExecutionInput & {
     buildPrompt: (task: Task) => string;
@@ -76,54 +134,74 @@ async function startExecution(
     progressSummary: input.queuedMessage,
     events: [{ id: "", kind: "queued", message: input.queuedMessage, createdAt: "" }],
   });
+  const controller = new AbortController();
+  activeTaskExecutionRuns.set(execution.id, {
+    taskId: input.task.id,
+    executionId: execution.id,
+    controller,
+  });
   const run = async () => {
-    const existingTask = input.store.getTask(input.task.id);
-    if (!existingTask) {
-      return;
-    }
-    let taskAtStart = existingTask;
-    if (shouldMarkTaskInProgress) {
-      const updatedTask = input.store.updateTask(input.task.id, { status: "in_progress" });
-      if (!updatedTask) {
+    let taskAtStart: Task = input.task;
+    let events = execution.events;
+    try {
+      const existingTask = input.store.getTask(input.task.id);
+      if (!existingTask) {
         return;
       }
-      taskAtStart = updatedTask;
-    }
-    const prompt = input.buildPrompt(taskAtStart);
-    const startedAt = new Date().toISOString();
-    let events = execution.events;
-    const running = input.store.updateTaskExecution(execution.id, {
-      status: "running",
-      startedAt,
-      progressSummary: "Preparing the task context.",
-      events: [
-        ...events,
-        {
-          id: "",
-          kind: "running",
-          message: "Work started.",
-          createdAt: "",
-        },
-      ],
-    });
-    events = running?.events ?? events;
-    const appendProgressEvent = (kind: TaskExecutionEvent["kind"], message: string) => {
-      events = [
-        ...events,
-        {
-          id: "",
-          kind,
-          message,
-          createdAt: "",
-        },
-      ];
-      const updated = input.store.updateTaskExecution(execution.id, {
-        progressSummary: message,
-        events,
+      taskAtStart = existingTask;
+      events = input.store.getTaskExecution(execution.id)?.events ?? execution.events;
+      if (isTaskRunCancelled(controller.signal) || isTaskExecutionAlreadyCancelled(input.store, execution.id)) {
+        markTaskExecutionCancelled({
+          store: input.store,
+          task: taskAtStart,
+          executionId: execution.id,
+          events,
+        });
+        return;
+      }
+      if (shouldMarkTaskInProgress) {
+        const updatedTask = input.store.updateTask(input.task.id, { status: "in_progress" });
+        if (!updatedTask) {
+          return;
+        }
+        taskAtStart = updatedTask;
+      }
+      const prompt = input.buildPrompt(taskAtStart);
+      const startedAt = new Date().toISOString();
+      const running = input.store.updateTaskExecution(execution.id, {
+        status: "running",
+        startedAt,
+        progressSummary: "Preparing the task context.",
+        events: [
+          ...events,
+          {
+            id: "",
+            kind: "running",
+            message: "Work started.",
+            createdAt: "",
+          },
+        ],
       });
-      events = updated?.events ?? events;
-    };
-    try {
+      events = running?.events ?? events;
+      const appendProgressEvent = (kind: TaskExecutionEvent["kind"], message: string) => {
+        if (isTaskRunCancelled(controller.signal) || isTaskExecutionAlreadyCancelled(input.store, execution.id)) {
+          return;
+        }
+        events = [
+          ...events,
+          {
+            id: "",
+            kind,
+            message,
+            createdAt: "",
+          },
+        ];
+        const updated = input.store.updateTaskExecution(execution.id, {
+          progressSummary: message,
+          events,
+        });
+        events = updated?.events ?? events;
+      };
       const boardContext = buildBoardTaskContext(input.store.listTasks(), input.task.id);
       const systemPrompt = buildTaskSystemPrompt(prompt, boardContext, input.memoryRoot);
       const result = await completeTaskWithLocalTools({
@@ -132,8 +210,18 @@ async function startExecution(
         model: config.model,
         systemPrompt,
         prompt,
+        signal: controller.signal,
         onToolProgress: (message) => appendProgressEvent("progress", message),
       });
+      if (isTaskRunCancelled(controller.signal) || isTaskExecutionAlreadyCancelled(input.store, execution.id)) {
+        markTaskExecutionCancelled({
+          store: input.store,
+          task: taskAtStart,
+          executionId: execution.id,
+          events,
+        });
+        return;
+      }
       input.store.updateTaskExecution(execution.id, {
         status: "succeeded",
         endedAt: new Date().toISOString(),
@@ -150,6 +238,7 @@ async function startExecution(
         ],
       });
       input.store.updateTask(input.task.id, { status: "done" });
+      throwIfTaskRunCancelled(controller.signal);
       await reviewAndApplyMemory({
         providerRouter: input.router,
         provider: input.provider,
@@ -164,6 +253,19 @@ async function startExecution(
         logger: input.memoryLogger,
       });
     } catch (err) {
+      if (
+        isTaskRunCancelled(controller.signal) ||
+        (controller.signal.aborted && isTaskRunCancellationError(err))
+      ) {
+        const task = input.store.getTask(input.task.id) ?? taskAtStart;
+        markTaskExecutionCancelled({
+          store: input.store,
+          task,
+          executionId: execution.id,
+          events: input.store.getTaskExecution(execution.id)?.events ?? execution.events,
+        });
+        return;
+      }
       const failureMessage = redactedErrorMessage(err);
       const handoff = buildFailureHandoff({
         task: taskAtStart,
@@ -186,6 +288,11 @@ async function startExecution(
         ],
       });
       input.store.updateTask(input.task.id, { status: "needs_attention" });
+    } finally {
+      const activeRun = activeTaskExecutionRuns.get(execution.id);
+      if (activeRun?.executionId === execution.id) {
+        activeTaskExecutionRuns.delete(execution.id);
+      }
     }
   };
   const queuedRun = enqueueTaskExecution(input.task.id, run);
@@ -197,6 +304,85 @@ async function startExecution(
     });
   }
   return input.store.getTaskExecution(execution.id) ?? execution;
+}
+
+function getAbortableExecutions(store: BoardStore, taskId: string): TaskExecution[] {
+  return store
+    .listTaskExecutions(taskId)
+    .filter((execution) => execution.status === "running" || execution.status === "queued")
+    .reverse();
+}
+
+function isTaskExecutionAlreadyCancelled(store: BoardStore, executionId: string) {
+  return store.getTaskExecution(executionId)?.status === "cancelled";
+}
+
+function markTaskExecutionCancelled(input: {
+  store: BoardStore;
+  task: Task;
+  executionId: string;
+  events: TaskExecutionEvent[];
+}): TaskExecution | null {
+  const existing = input.store.getTaskExecution(input.executionId);
+  if (!existing) {
+    return null;
+  }
+  if (existing.status === "cancelled") {
+    releaseCancelledTask(input.store, input.task);
+    return existing;
+  }
+  if (existing.status !== "queued" && existing.status !== "running") {
+    return existing;
+  }
+  const events = existing.events.length > 0 ? existing.events : input.events;
+  const cancelled = input.store.updateTaskExecution(input.executionId, {
+    status: "cancelled",
+    endedAt: new Date().toISOString(),
+    progressSummary: CANCELLED_PROGRESS_SUMMARY,
+    output: buildCancellationHandoff(input.task),
+    error: CANCELLED_BY_USER_MESSAGE,
+    events: [
+      ...events,
+      {
+        id: "",
+        kind: "cancelled",
+        message: CANCELLED_PROGRESS_SUMMARY,
+        createdAt: "",
+      },
+    ],
+  });
+  releaseCancelledTask(input.store, input.task);
+  return cancelled;
+}
+
+function releaseCancelledTask(store: BoardStore, task: Task) {
+  if (task.status === "in_progress") {
+    store.updateTask(task.id, { status: "ready" });
+  }
+}
+
+function isTaskRunCancelled(signal?: AbortSignal) {
+  return Boolean(signal?.aborted);
+}
+
+function throwIfTaskRunCancelled(signal?: AbortSignal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  const reason = signal.reason;
+  if (reason instanceof Error) {
+    throw reason;
+  }
+  const error = new Error(typeof reason === "string" ? reason : CANCELLED_BY_USER_MESSAGE);
+  error.name = "AbortError";
+  throw error;
+}
+
+function isTaskRunCancellationError(err: unknown) {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  return err.name === "AbortError" || /\b(abort|aborted|cancelled|canceled)\b/i.test(err.message);
 }
 
 function enqueueTaskExecution(taskId: string, run: () => Promise<void>): Promise<void> {
@@ -217,6 +403,7 @@ async function completeTaskWithLocalTools(input: {
   model: string;
   systemPrompt: string;
   prompt: string;
+  signal?: AbortSignal;
   onToolProgress?: (message: string) => void;
 }): Promise<string> {
   const messages: Message[] = [
@@ -233,6 +420,7 @@ async function completeTaskWithLocalTools(input: {
   };
 
   for (let round = 0; round < MAX_LOCAL_TOOL_ROUNDS; round += 1) {
+    throwIfTaskRunCancelled(input.signal);
     const result = await input.router.completeWithTools({
       provider: input.provider,
       model: input.model,
@@ -240,7 +428,9 @@ async function completeTaskWithLocalTools(input: {
       messages: [{ role: "user", content: input.prompt }],
       context,
       tools: LOCAL_AGENT_TOOLS,
+      signal: input.signal,
     });
+    throwIfTaskRunCancelled(input.signal);
     const toolCalls = extractToolCalls(result.raw);
     if (toolCalls.length === 0) {
       const content = result.content.trim();
@@ -252,7 +442,9 @@ async function completeTaskWithLocalTools(input: {
 
     context.messages.push(result.raw);
     for (const call of toolCalls) {
-      const toolResult = await executeLocalToolCall(call);
+      throwIfTaskRunCancelled(input.signal);
+      const toolResult = await executeLocalToolCall(call, { signal: input.signal });
+      throwIfTaskRunCancelled(input.signal);
       context.messages.push(toolResult.message);
       input.onToolProgress?.(toolResult.summary);
     }
@@ -274,6 +466,16 @@ function buildFailureHandoff(input: {
     "",
     "### Next assignee step",
     "Open this task, read the failed output above, address the concrete blocker using the task notes and board context, then move the task back to In Progress to rerun the agent.",
+  ].join("\n");
+}
+
+function buildCancellationHandoff(task: Task): string {
+  return [
+    "## Work cancelled",
+    "",
+    `Task: ${task.title}`,
+    "Status: cancelled",
+    `Reason: ${CANCELLED_BY_USER_MESSAGE}`,
   ].join("\n");
 }
 

@@ -77,7 +77,12 @@ export type TaskCreateInput = {
 
 export type TaskUpdateInput = Partial<TaskCreateInput>;
 
-export type TaskExecutionStatus = "queued" | "running" | "succeeded" | "failed";
+export type TaskExecutionStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 export type TaskExecutionRequestKind = "initial" | "follow_up" | "rerun" | "manual";
 export type TaskExecutionEventKind =
   | "queued"
@@ -85,7 +90,8 @@ export type TaskExecutionEventKind =
   | "progress"
   | "artifact"
   | "succeeded"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export interface TaskExecution {
   id: string;

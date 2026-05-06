@@ -119,6 +119,63 @@ describe("TaskModal", () => {
     );
   });
 
+  it("lets the user stop active AI work", async () => {
+    const onAbortExecution = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "running",
+          endedAt: null,
+          progressSummary: "Preparing the task context.",
+        }),
+      },
+      { onAbortExecution },
+    );
+
+    await clickButton("Stop run");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onAbortExecution).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("Run cancelled.");
+  });
+
+  it("shows cancelled runs as terminal task history", async () => {
+    await renderTaskModal({
+      ...task(),
+      status: "ready",
+      execution: execution({
+        status: "cancelled",
+        progressSummary: "Work cancelled.",
+        error: "Cancelled by user.",
+        output: "## Work cancelled\n\nStatus: cancelled",
+        events: [
+          {
+            id: "event-1",
+            kind: "queued",
+            message: "Request queued.",
+            createdAt: "2026-05-03T07:00:00.000Z",
+          },
+          {
+            id: "event-2",
+            kind: "cancelled",
+            message: "Work cancelled.",
+            createdAt: "2026-05-03T07:00:30.000Z",
+          },
+        ],
+      }),
+    });
+
+    expect(document.body.textContent).toContain("Cancelled");
+    expect(document.body.textContent).toContain("Work cancelled");
+    expect(document.body.textContent).not.toContain("Current step");
+    await clickButtonByLabel("Open Runs");
+    expect(document.body.textContent).toContain("Run 1: Cancelled");
+    expect(document.body.textContent).toContain("Work was cancelled by the user.");
+  });
+
   it("saves edited title and notes before agent work starts", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     await renderTaskModal(

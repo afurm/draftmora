@@ -20,7 +20,7 @@ export const openAiProvider: AiProvider = {
   async complete(request, auth) {
     const model = resolveOpenAiModel(auth, request.model);
     const context = buildContext(model, request.messages, request.systemPrompt);
-    const raw = await completeOpenAi(model, context, auth, request.maxTokens);
+    const raw = await completeOpenAi(model, context, auth, request.maxTokens, request.signal);
     return {
       content: extractAssistantText(assertUsableAssistantMessage(raw)),
       raw,
@@ -35,6 +35,7 @@ export const openAiProvider: AiProvider = {
         { ...request.context, tools: request.context.tools ?? request.tools },
         auth,
         request.maxTokens,
+        request.signal,
       ),
     );
     return {
@@ -49,13 +50,16 @@ async function completeOpenAi(
   context: Context,
   auth: ProviderAuth,
   maxTokens?: number,
+  signal?: AbortSignal,
 ): Promise<AssistantMessage> {
-  const options = buildOpenAiOptions(auth, maxTokens);
+  const options = buildOpenAiOptions(auth, maxTokens, signal);
   const retryCount = resolveTransientRetryCount(auth);
   let lastRetryableError: Error | undefined;
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    throwIfRequestCancelled(signal);
     try {
       const message = await completeOpenAiOnce(model, context, auth, options);
+      throwIfRequestCancelled(signal);
       if (!isRetryableOpenAiError(message)) {
         return message;
       }
@@ -72,7 +76,7 @@ async function completeOpenAi(
     if (attempt >= retryCount) {
       break;
     }
-    await waitBeforeTransientRetry(attempt, auth);
+    await waitBeforeTransientRetry(attempt, auth, signal);
   }
   throw lastRetryableError ?? new Error("OpenAI request failed.");
 }
@@ -106,22 +110,30 @@ function resolveTransientRetryCount(auth: ProviderAuth) {
   return Math.max(0, auth.maxRetries ?? DEFAULT_TRANSIENT_ERROR_RETRIES);
 }
 
-async function waitBeforeTransientRetry(attempt: number, auth: ProviderAuth): Promise<void> {
+async function waitBeforeTransientRetry(
+  attempt: number,
+  auth: ProviderAuth,
+  signal?: AbortSignal,
+): Promise<void> {
   const maxDelayMs = auth.maxRetryDelayMs ?? MAX_TRANSIENT_RETRY_DELAY_MS;
   const delayMs = Math.min(DEFAULT_TRANSIENT_RETRY_DELAY_MS * 2 ** attempt, maxDelayMs);
   if (delayMs <= 0) {
     return;
   }
-  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  await waitWithCancellation(delayMs, signal);
 }
 
 function buildOpenAiOptions(
   auth: ProviderAuth,
   requestMaxTokens?: number,
+  signal?: AbortSignal,
 ): ProviderStreamOptions {
   const options: ProviderStreamOptions = {
     apiKey: auth.apiKey,
   };
+  if (signal) {
+    options.signal = signal;
+  }
   const maxTokens = requestMaxTokens ?? auth.maxTokens;
   if (maxTokens !== undefined) {
     options.maxTokens = maxTokens;
@@ -184,6 +196,9 @@ function isRetryableOpenAiError(result: AssistantMessage | Error) {
     return false;
   }
   const normalized = message.toLowerCase();
+  if (/\b(abort|aborted|cancelled|canceled)\b/.test(normalized)) {
+    return false;
+  }
   if (
     /\b(authentication_error|invalid_request_error|permission_denied|insufficient_quota)\b/.test(
       normalized,
@@ -201,6 +216,43 @@ function isRetryableOpenAiError(result: AssistantMessage | Error) {
     ) ||
     /\b(429|500|502|503|504|529)\b/.test(normalized)
   );
+}
+
+function throwIfRequestCancelled(signal?: AbortSignal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  const reason = signal.reason;
+  if (reason instanceof Error) {
+    throw reason;
+  }
+  const error = new Error(typeof reason === "string" ? reason : "Request cancelled.");
+  error.name = "AbortError";
+  throw error;
+}
+
+function waitWithCancellation(delayMs: number, signal?: AbortSignal) {
+  throwIfRequestCancelled(signal);
+  return new Promise<void>((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    function cleanup() {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+    }
+    function onAbort() {
+      cleanup();
+      try {
+        throwIfRequestCancelled(signal);
+      } catch (err) {
+        reject(err);
+      }
+    }
+    timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function isWebSocketCloseError(result: AssistantMessage | Error) {

@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  CircleStop,
   Clock3,
   ExternalLink,
   FileText,
@@ -209,6 +210,7 @@ export function TaskModal(props: {
   onClose: () => void;
   onDelete?: () => Promise<void>;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onAbortExecution?: () => Promise<void>;
   onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
   onSave: (input: TaskCreateInput) => Promise<void>;
 }) {
@@ -309,6 +311,7 @@ export function TaskModal(props: {
       onFocusAreaChange={setFocusAreaId}
       onTitleTouched={() => setTitleTouched(true)}
       onAskFollowUp={props.onAskFollowUp}
+      onAbortExecution={props.onAbortExecution}
       onCreateDraft={props.onCreateDraft}
     />
   );
@@ -402,10 +405,12 @@ function TaskDetailWorkspace(props: {
   onFocusAreaChange: (value: string) => void;
   onTitleTouched: () => void;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onAbortExecution?: () => Promise<void>;
   onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
 }) {
   const [followUp, setFollowUp] = useState("");
   const [asking, setAsking] = useState(false);
+  const [aborting, setAborting] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [nextActionConsumed, setNextActionConsumed] = useState(false);
   const [pendingFollowUps, setPendingFollowUps] = useState<PendingFollowUp[]>([]);
@@ -433,6 +438,7 @@ function TaskDetailWorkspace(props: {
   useEffect(() => {
     setFollowUp("");
     setPendingFollowUps([]);
+    setAborting(false);
     setNotice(null);
     setError(null);
     setDeleteDialogOpen(false);
@@ -608,6 +614,23 @@ function TaskDetailWorkspace(props: {
     }
   }
 
+  async function abortExecution() {
+    if (!props.onAbortExecution || !running) {
+      return;
+    }
+    setAborting(true);
+    setNotice(null);
+    setError(null);
+    try {
+      await props.onAbortExecution();
+      setNotice("Run cancelled.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAborting(false);
+    }
+  }
+
   async function retryPendingFollowUp(entry: PendingFollowUp) {
     await askFollowUp(entry.prompt, entry.content, entry.id);
   }
@@ -729,11 +752,30 @@ function TaskDetailWorkspace(props: {
           </div>
           {running && latestExecution && (
             <div className="border-t px-3 py-2 sm:px-4">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Current step</span>
-                <span className="text-right font-medium">
-                  {formatExecutionMessage(latestExecution.progressSummary)}
-                </span>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center justify-between gap-3 text-sm sm:flex-1">
+                  <span className="shrink-0 text-muted-foreground">Current step</span>
+                  <span className="min-w-0 text-right font-medium">
+                    {formatExecutionMessage(latestExecution.progressSummary)}
+                  </span>
+                </div>
+                {props.onAbortExecution && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => void abortExecution()}
+                    disabled={aborting}
+                  >
+                    {aborting ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <CircleStop data-icon="inline-start" />
+                    )}
+                    {aborting ? "Stopping..." : "Stop run"}
+                  </Button>
+                )}
               </div>
               <Progress className="mt-2" value={executionProgress(latestExecution)} />
             </div>
@@ -1602,7 +1644,12 @@ function TaskRunsPanel(props: { task: Task }) {
   const executions = getTaskExecutionHistory(props.task);
   const latestNeedsLogOpen = [...executions]
     .reverse()
-    .find((execution) => execution.status === "running" || execution.status === "failed");
+    .find(
+      (execution) =>
+        execution.status === "running" ||
+        execution.status === "failed" ||
+        execution.status === "cancelled",
+    );
   const [expandedExecutionId, setExpandedExecutionId] = useState<string | null>(
     latestNeedsLogOpen?.id ?? null,
   );
@@ -1694,6 +1741,14 @@ function TaskStateBadge(props: { task: Task }) {
       </Badge>
     );
   }
+  if (execution?.status === "cancelled") {
+    return (
+      <Badge variant="outline">
+        <CircleStop data-icon="inline-start" />
+        Cancelled
+      </Badge>
+    );
+  }
   if (execution?.status === "succeeded" || props.task.status === "done") {
     return (
       <Badge variant="secondary">
@@ -1711,6 +1766,9 @@ function formatTaskSurfaceState(task: Task) {
   }
   if (task.execution?.status === "failed" || task.status === "needs_attention") {
     return "Needs attention";
+  }
+  if (task.execution?.status === "cancelled") {
+    return "Cancelled";
   }
   if (task.execution?.status === "succeeded" || task.status === "done") {
     return "Completed";
@@ -1866,6 +1924,9 @@ function composerPlaceholder(task: Task) {
   if (execution?.status === "failed" || task.status === "needs_attention") {
     return "Tell the agent how to recover...";
   }
+  if (execution?.status === "cancelled") {
+    return "Ask a follow-up or restart this task...";
+  }
   if (execution?.status === "succeeded" || task.status === "done") {
     return "Ask a follow-up or request a change...";
   }
@@ -1901,6 +1962,8 @@ function executionTerminalLines(execution: TaskExecution): string[] {
     lines.push("", "Waiting for the current task run to finish.");
   } else if (execution.status === "running") {
     lines.push("", "Waiting for assistant output...");
+  } else if (execution.status === "cancelled") {
+    lines.push("", "Work was cancelled by the user.");
   }
   if (execution.error) {
     lines.push("", `error: ${execution.error}`);
@@ -2139,6 +2202,9 @@ function executionStatusIcon(execution: TaskExecution) {
   if (execution.status === "failed") {
     return <AlertTriangle data-icon="inline-start" />;
   }
+  if (execution.status === "cancelled") {
+    return <CircleStop data-icon="inline-start" />;
+  }
   if (execution.status === "queued") {
     return <Clock3 data-icon="inline-start" />;
   }
@@ -2148,6 +2214,7 @@ function executionStatusIcon(execution: TaskExecution) {
 function executionProgress(execution: TaskExecution) {
   if (execution.status === "succeeded") return 100;
   if (execution.status === "failed") return 100;
+  if (execution.status === "cancelled") return 100;
   if (execution.status === "running") return 58;
   return 18;
 }
@@ -2158,6 +2225,9 @@ function formatExecutionStatus(execution: TaskExecution) {
   }
   if (execution.status === "failed") {
     return "Needs attention";
+  }
+  if (execution.status === "cancelled") {
+    return "Cancelled";
   }
   if (execution.status === "queued") {
     return "Queued";
@@ -2178,6 +2248,11 @@ function formatExecutionWindow(execution: TaskExecution) {
   }
   if (execution.status === "running") {
     return `Working for ${formatDuration(execution.startedAt)}`;
+  }
+  if (execution.status === "cancelled") {
+    return execution.endedAt
+      ? `Cancelled ${formatEventTime(execution.endedAt)}`
+      : "Cancelled recently";
   }
   if (execution.endedAt) {
     return `Finished ${formatEventTime(execution.endedAt)}`;
@@ -2209,7 +2284,8 @@ function formatExecutionMessage(message: string) {
     .replace(/^Agent model round \d+\.$/, "Thinking through the next step.")
     .replace("Agent execution completed.", "Work completed.")
     .replace("Agent execution blocked.", "Work needs setup before it can continue.")
-    .replace("Agent execution failed.", "Work needs attention.");
+    .replace("Agent execution failed.", "Work needs attention.")
+    .replace("Agent execution cancelled.", "Work cancelled.");
 }
 
 function formatEventTime(value: string) {

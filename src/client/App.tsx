@@ -294,6 +294,12 @@ export function App() {
     setEditingTask((current) => (current?.id === taskId ? result.task : current));
   }
 
+  async function abortTaskRun(taskId: string) {
+    const result = await api.abortTaskRun(taskId);
+    setTasks((current) => current.map((task) => (task.id === taskId ? result.task : task)));
+    setEditingTask((current) => (current?.id === taskId ? result.task : current));
+  }
+
   async function createDraftTask(input: TaskCreateInput) {
     const result = await api.createTask(input);
     setTasks((current) => [...current, result.task]);
@@ -643,6 +649,7 @@ export function App() {
               }}
               onDelete={editingTask ? () => deleteTask(editingTask.id) : undefined}
               onAskFollowUp={editingTask ? (prompt) => askTaskFollowUp(editingTask.id, prompt) : undefined}
+              onAbortExecution={editingTask ? () => abortTaskRun(editingTask.id) : undefined}
               onCreateDraft={editingTask ? createDraftTask : undefined}
               onSave={createOrUpdateTask}
             />

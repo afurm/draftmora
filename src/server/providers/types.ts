@@ -39,6 +39,7 @@ export type CompletionRequest = {
   messages: ChatMessage[];
   systemPrompt?: string;
   maxTokens?: number;
+  signal?: AbortSignal;
 };
 
 export type CompletionResult = {

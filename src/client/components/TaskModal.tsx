@@ -6,6 +6,7 @@ import {
   Clock3,
   ExternalLink,
   FileText,
+  FolderOpen,
   Info,
   Link2,
   LoaderCircle,
@@ -40,6 +41,7 @@ import type {
   TaskStatus,
 } from "../../shared/types";
 import { COLUMN_LABELS, PRIORITIES, TASK_STATUSES } from "../../shared/types";
+import { api } from "../api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -206,7 +208,7 @@ const INSPECTOR_TABS: Array<{
   { value: "details", label: "Details", icon: Info },
   { value: "context", label: "Context", icon: MessageSquareText },
   { value: "runs", label: "Runs", icon: Clock3 },
-  { value: "artifacts", label: "Files", icon: FileText },
+  { value: "artifacts", label: "Artifacts", icon: FileText },
 ];
 
 export function TaskModal(props: {
@@ -1424,8 +1426,8 @@ function TaskThreadMessageRow(props: {
 
   return (
     <ItemGroup>
-      {message.execution.artifacts.map((artifact) => (
-        <ArtifactRow artifact={artifact} key={artifact.id} />
+      {dedupeTaskExecutionArtifacts(message.execution.artifacts).map((artifact) => (
+        <ArtifactRow artifact={artifact} key={artifact.id} taskId={message.execution.taskId} />
       ))}
     </ItemGroup>
   );
@@ -1582,7 +1584,7 @@ function TaskInspector(props: {
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
             <TabsTrigger value="runs">Runs</TabsTrigger>
-            <TabsTrigger value="artifacts">Files</TabsTrigger>
+            <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
           </TabsList>
           <Button
             type="button"
@@ -1771,7 +1773,9 @@ function TaskRunsPanel(props: { task: Task }) {
 }
 
 function TaskArtifactsPanel(props: { task: Task }) {
-  const artifacts = getTaskExecutionHistory(props.task).flatMap((execution) => execution.artifacts);
+  const artifacts = dedupeTaskExecutionArtifacts(
+    getTaskExecutionHistory(props.task).flatMap((execution) => execution.artifacts),
+  );
   if (artifacts.length === 0) {
     return (
       <Empty className="min-h-40 border">
@@ -1788,7 +1792,7 @@ function TaskArtifactsPanel(props: { task: Task }) {
   return (
     <ItemGroup>
       {artifacts.map((artifact) => (
-        <ArtifactRow artifact={artifact} key={artifact.id} />
+        <ArtifactRow artifact={artifact} key={artifact.id} taskId={props.task.id} />
       ))}
     </ItemGroup>
   );
@@ -2251,7 +2255,10 @@ function ExecutionOutput(props: {
   );
 }
 
-function ArtifactRow(props: { artifact: TaskExecutionArtifact }) {
+function ArtifactRow(props: { artifact: TaskExecutionArtifact; taskId: string }) {
+  const [opening, setOpening] = useState(false);
+  const canRevealFile = isLocalFileArtifact(props.artifact);
+  const externalUrl = isHttpArtifactUrl(props.artifact.url) ? props.artifact.url : null;
   const icon =
     props.artifact.type === "link" ? (
       <Link2 />
@@ -2266,20 +2273,60 @@ function ArtifactRow(props: { artifact: TaskExecutionArtifact }) {
       <ItemContent>
         <ItemTitle>{props.artifact.title}</ItemTitle>
         {props.artifact.content && (
-          <p className="text-sm text-muted-foreground">{props.artifact.content}</p>
+          <p className="break-words text-sm text-muted-foreground">{props.artifact.content}</p>
         )}
       </ItemContent>
-      {props.artifact.url && (
+      {(externalUrl || canRevealFile) && (
         <ItemActions>
-          <ExternalLink />
+          {canRevealFile ? (
+            opening ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <FolderOpen />
+            )
+          ) : (
+            <ExternalLink />
+          )}
         </ItemActions>
       )}
     </>
   );
 
-  return props.artifact.url ? (
+  async function revealFile() {
+    if (opening) {
+      return;
+    }
+    setOpening(true);
+    try {
+      await api.openTaskArtifact(props.taskId, props.artifact.id);
+    } catch (error) {
+      const localPath = props.artifact.content ?? props.artifact.url ?? "";
+      if (localPath) {
+        await navigator.clipboard?.writeText(localPath).catch(() => undefined);
+      }
+      window.alert(error instanceof Error ? error.message : "Could not reveal artifact file.");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  if (canRevealFile) {
+    return (
+      <Item asChild variant="outline" size="sm">
+        <button
+          type="button"
+          aria-label={`Reveal ${props.artifact.title}`}
+          onClick={() => void revealFile()}
+        >
+          {content}
+        </button>
+      </Item>
+    );
+  }
+
+  return externalUrl ? (
     <Item asChild variant="outline" size="sm">
-      <a href={props.artifact.url} target="_blank" rel="noreferrer">
+      <a href={externalUrl} target="_blank" rel="noreferrer">
         {content}
       </a>
     </Item>
@@ -2288,6 +2335,35 @@ function ArtifactRow(props: { artifact: TaskExecutionArtifact }) {
       {content}
     </Item>
   );
+}
+
+function isHttpArtifactUrl(url: string | undefined): url is string {
+  return Boolean(url?.startsWith("http://") || url?.startsWith("https://"));
+}
+
+function isLocalFileArtifact(artifact: TaskExecutionArtifact) {
+  return (
+    artifact.url?.startsWith("file://") ||
+    (artifact.type === "output" && Boolean(artifact.content && isAbsoluteLocalPath(artifact.content)))
+  );
+}
+
+function isAbsoluteLocalPath(value: string) {
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function dedupeTaskExecutionArtifacts(artifacts: TaskExecutionArtifact[]) {
+  const seen = new Set<string>();
+  return artifacts.filter((artifact) => {
+    const key =
+      artifact.url?.trim().toLowerCase() ??
+      `${artifact.type}:${artifact.title.trim()}:${artifact.content?.trim() ?? ""}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function executionStatusIcon(execution: TaskExecution) {

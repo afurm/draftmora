@@ -3,6 +3,7 @@ import type {
   ProviderId,
   Task,
   TaskExecution,
+  TaskExecutionArtifact,
   TaskExecutionEvent,
 } from "../shared/types";
 import type { BoardStore } from "./db";
@@ -14,6 +15,10 @@ import {
 } from "./memory";
 import type { ProviderRouter } from "./providers/router";
 import { redactedErrorMessage } from "./redaction";
+import {
+  extractTaskExecutionArtifacts,
+  mergeTaskExecutionArtifacts,
+} from "./task-artifacts";
 
 const MAX_LOCAL_TOOL_ROUNDS = 24;
 const CANCELLED_BY_USER_MESSAGE = "Cancelled by user.";
@@ -390,11 +395,16 @@ function createTaskExecutionRun(
         });
         return;
       }
+      const output = result.content || "Finished.";
       input.store.updateTaskExecution(execution.id, {
         status: "succeeded",
         endedAt: new Date().toISOString(),
         progressSummary: "Work completed.",
-        output: result || "Finished.",
+        output,
+        artifacts: mergeTaskExecutionArtifacts([
+          ...result.artifacts,
+          ...extractTaskExecutionArtifacts(output),
+        ]),
         events: [
           ...events,
           {
@@ -413,7 +423,7 @@ function createTaskExecutionRun(
         model,
         messages: [
           { role: "user", content: prompt },
-          { role: "assistant", content: result || "Finished." },
+          { role: "assistant", content: output },
         ],
         query: prompt,
         memoryRoot: input.memoryRoot,
@@ -598,7 +608,8 @@ async function completeTaskWithLocalTools(input: {
   prompt: string;
   signal?: AbortSignal;
   onToolProgress?: (message: string) => void;
-}): Promise<string> {
+}): Promise<{ content: string; artifacts: TaskExecutionArtifact[] }> {
+  let artifacts: TaskExecutionArtifact[] = [];
   const messages: Message[] = [
     {
       role: "user",
@@ -630,7 +641,7 @@ async function completeTaskWithLocalTools(input: {
       if (!content) {
         throw new Error("OpenAI finished without a usable task result.");
       }
-      return content;
+      return { content, artifacts };
     }
 
     context.messages.push(result.raw);
@@ -639,6 +650,7 @@ async function completeTaskWithLocalTools(input: {
       const toolResult = await executeLocalToolCall(call, { signal: input.signal });
       throwIfTaskRunCancelled(input.signal);
       context.messages.push(toolResult.message);
+      artifacts = mergeTaskExecutionArtifacts([...artifacts, ...toolResult.artifacts]);
       input.onToolProgress?.(toolResult.summary);
     }
   }

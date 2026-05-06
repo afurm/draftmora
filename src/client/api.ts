@@ -76,6 +76,12 @@ export const api = {
   async deleteTask(id: string) {
     return request<void>(`/api/tasks/${id}`, { method: "DELETE" });
   },
+  async openTaskArtifact(id: string, artifactId: string) {
+    return request<{ ok: boolean; path: string }>(
+      `/api/tasks/${id}/artifacts/${artifactId}/open`,
+      { method: "POST" },
+    );
+  },
   async settings() {
     return request<AppSettings>("/api/settings");
   },

@@ -16,6 +16,11 @@ import {
   type ProviderId,
   type Task,
 } from "../shared/types";
+import {
+  revealArtifactFile,
+  resolveArtifactFilePath,
+  type ArtifactFileOpenResult,
+} from "./artifact-file-opener";
 import { BoardStore } from "./db";
 import {
   buildMemoryContextBlock,
@@ -179,10 +184,12 @@ export function buildServer(options: {
   providerRouter?: ProviderRouter;
   runTaskExecutionsInline?: boolean;
   memoryRoot?: string;
+  artifactFileOpener?: (filePath: string) => Promise<ArtifactFileOpenResult>;
 } = {}) {
   const store = options.store ?? new BoardStore();
   const providerRouter = options.providerRouter ?? new ProviderRouter(store);
   const memoryRoot = options.memoryRoot ?? process.cwd();
+  const artifactFileOpener = options.artifactFileOpener ?? revealArtifactFile;
   const app = Fastify({ logger: false });
   const memoryReviewLogger: MemoryReviewLogger = {
     warn: (message) => console.warn(message),
@@ -315,6 +322,29 @@ export function buildServer(options: {
     }
     return reply.status(204).send();
   });
+
+  app.post<{ Params: { id: string; artifactId: string } }>(
+    "/api/tasks/:id/artifacts/:artifactId/open",
+    async (request, reply) => {
+      const task = store.getTask(request.params.id);
+      if (!task) {
+        return reply.status(404).send({ error: "Task not found" });
+      }
+      const artifact = findTaskExecutionArtifact(task, request.params.artifactId);
+      if (!artifact) {
+        return reply.status(404).send({ error: "Artifact not found" });
+      }
+      const filePath = resolveArtifactFilePath(artifact);
+      if (!filePath) {
+        return reply.status(400).send({ error: "Artifact is not a local file" });
+      }
+      const result = await artifactFileOpener(filePath);
+      if (!result.ok) {
+        return reply.status(500).send({ error: result.error, path: result.path });
+      }
+      return result;
+    },
+  );
 
   app.get("/api/settings", async () => store.getSettings());
 
@@ -609,6 +639,19 @@ function parseReadableProposedActions(content: string): AssistantProposedAction[
     addCreateTaskAction(title, match[1]);
   }
   return actions;
+}
+
+function findTaskExecutionArtifact(task: Task, artifactId: string) {
+  const executions = task.execution
+    ? [...(task.execution.previousExecutions ?? []), task.execution]
+    : [];
+  for (const execution of executions) {
+    const artifact = execution.artifacts.find((candidate) => candidate.id === artifactId);
+    if (artifact) {
+      return artifact;
+    }
+  }
+  return null;
 }
 
 function normalizeReadableTaskStatusCandidate(match: RegExpMatchArray): string | undefined {

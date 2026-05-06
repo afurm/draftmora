@@ -1,6 +1,6 @@
 {
   "name": "draftmora",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first AI agent board with chat, SQLite storage, and OpenAI account auth.",
   "private": false,
   "license": "MIT",
@@ -25,6 +25,7 @@
     "dist/",
     ".env.example",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "publishConfig": {
@@ -63,7 +64,7 @@
     "@mariozechner/pi-ai": "^0.73.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.2.1",
-    "typebox": "^1.1.37",
+    "typebox": "^1.1.38",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -79,11 +80,11 @@
     "jsdom": "^29.1.1",
     "lucide-react": "^1.14.0",
     "radix-ui": "^1.4.3",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "shadcn": "^4.6.0",
+    "shadcn": "^4.7.0",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.4",
     "tsx": "^4.19.2",

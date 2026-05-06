@@ -3,13 +3,13 @@
 [![CI](https://github.com/afurm/draftmora/actions/workflows/ci.yml/badge.svg)](https://github.com/afurm/draftmora/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/draftmora?color=CB3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/draftmora)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111111.svg)](LICENSE)
-![Node.js >=22.14](https://img.shields.io/badge/node-%3E%3D22.14-339933?logo=node.js&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)
+![Node.js 24 recommended](https://img.shields.io/badge/node-24%20recommended-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)
 ![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)
 ![OpenAI account auth](https://img.shields.io/badge/OpenAI-account%20auth-412991?logo=openai&logoColor=white)
 ![Local-first](https://img.shields.io/badge/local--first-yes-111111)
 
-![Draftmora app preview](https://raw.githubusercontent.com/afurm/draftmora/main/public/draftmora-preview.png)
+![Draftmora app preview](https://raw.githubusercontent.com/afurm/draftmora/main/.github/assets/draftmora-preview.png)
 
 **Messy ideas in. Clear tasks out.**
 
@@ -49,7 +49,7 @@ pasting an API key.
 
 ## Requirements
 
-- Node.js 22.14 or newer.
+- Node.js 24 is recommended. Node.js 22.14 or newer remains supported.
 - npm 11 or newer.
 - Optional: an OpenAI account connection for supported account-auth models, or
   `OPENAI_API_KEY` for API-key backed task execution.
@@ -153,30 +153,9 @@ The package starts on `http://127.0.0.1:4141` and stores data in
 `./data/board.db` from the directory where the command is run. Set
 `BOARD_DB_PATH` when you want a fixed database location.
 
-## Release Automation
+## Changelog
 
-Publishing a GitHub Release whose tag matches `package.json` can publish the
-same version to the release page, npm, and GitHub Packages in one workflow. For
-example, release tag `v0.1.1` publishes `draftmora@0.1.1` to npm and
-`@afurm/draftmora@0.1.1` to GitHub Packages.
-
-One-time npm setup:
-
-1. Open the npm package settings for
-   [`draftmora`](https://www.npmjs.com/package/draftmora).
-2. Add a trusted publisher with GitHub Actions.
-3. Use owner `afurm`, repository `draftmora`, and workflow filename
-   `release-publish.yml`.
-
-The workflow validates dependencies, typecheck, tests, build, and package smoke
-before publishing. npm receives the public CLI package users should install with
-`npx draftmora`. GitHub Packages receives a scoped mirror package so the repo
-sidebar can show a package entry.
-
-GitHub's repository sidebar "Packages" section is separate from npm. It only
-shows packages published to GitHub Packages, not packages published to
-npmjs.com. GitHub's npm registry requires a scoped package name, so the GitHub
-Packages mirror is published as `@afurm/draftmora`.
+Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Security Model
 

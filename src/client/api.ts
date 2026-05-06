@@ -62,6 +62,9 @@ export const api = {
       body: JSON.stringify({ prompt }),
     });
   },
+  async abortTaskRun(id: string) {
+    return request<TaskMutationResponse>(`/api/tasks/${id}/abort`, { method: "POST" });
+  },
   async deleteTask(id: string) {
     return request<void>(`/api/tasks/${id}`, { method: "DELETE" });
   },

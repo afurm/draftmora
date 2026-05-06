@@ -31,6 +31,7 @@ import {
 } from "./providers/openai-auth";
 import { ProviderRouter } from "./providers/router";
 import {
+  abortTaskExecutionForTask,
   startTaskExecutionForTask,
   startTaskFollowUpExecutionForTask,
 } from "./task-executor";
@@ -260,6 +261,23 @@ export function buildServer(options: {
       task: latestTask,
       execution: latestTask.execution ?? execution,
     });
+  });
+
+  app.post<{ Params: { id: string } }>("/api/tasks/:id/abort", async (request, reply) => {
+    const result = abortTaskExecutionForTask({
+      store,
+      taskId: request.params.id,
+    });
+    if (!result.found) {
+      return reply.status(404).send({ error: result.reason });
+    }
+    if (!result.cancelled) {
+      return reply.status(409).send({ error: result.reason ?? "No active task run to cancel." });
+    }
+    return {
+      task: store.getTask(request.params.id) ?? result.task,
+      execution: result.execution,
+    };
   });
 
   app.delete<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {

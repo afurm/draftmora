@@ -184,6 +184,7 @@ class StubProviderRouter extends ProviderRouter {
 class BlockingTaskProviderRouter extends ProviderRouter {
   requests: CompletionRequest[] = [];
   toolRequests: ToolCompletionRequest[] = [];
+  toolRequestSignals: AbortSignal[] = [];
   private toolCompletions: Array<(content: string) => void> = [];
 
   override async complete(request: CompletionRequest): Promise<CompletionResult> {
@@ -198,6 +199,9 @@ class BlockingTaskProviderRouter extends ProviderRouter {
     request: ToolCompletionRequest,
   ): Promise<ToolCompletionResult> {
     this.toolRequests.push(request);
+    if (request.signal) {
+      this.toolRequestSignals.push(request.signal);
+    }
     return new Promise<ToolCompletionResult>((resolve) => {
       this.toolCompletions.push((content) => {
         resolve({
@@ -533,6 +537,93 @@ describe("routes", () => {
         : "";
     expect(followUpPromptContent).toContain("Existing task results:");
     expect(followUpPromptContent).toContain("Initial result from stub provider.");
+    await app.close();
+    store.close();
+  });
+
+  it("cancels an active task run and ignores late provider output", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "routes-abort-"));
+    tempDirs.push(dir);
+    const store = new BoardStore(path.join(dir, "board.db"));
+    const providerRouter = new BlockingTaskProviderRouter(store);
+    const app = buildServer({
+      store,
+      providerRouter,
+      memoryRoot: dir,
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Stop this run",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task as Task;
+
+    await waitUntil(() => providerRouter.toolRequests.length === 1);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/abort`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().task.status).toBe("ready");
+    expect(response.json().task.execution.status).toBe("cancelled");
+    expect(response.json().task.execution.progressSummary).toBe("Work cancelled.");
+    expect(response.json().task.execution.error).toBe("Cancelled by user.");
+    expect(
+      response
+        .json()
+        .task.execution.events.map((event: { kind: string }) => event.kind),
+    ).toEqual(["queued", "running", "cancelled"]);
+    expect(providerRouter.toolRequestSignals[0]?.aborted).toBe(true);
+
+    providerRouter.resolveNextToolRequest("Late result that should not overwrite cancellation.");
+    await flushQueuedPromises();
+
+    const detailed = await app.inject({
+      method: "GET",
+      url: `/api/tasks/${task.id}`,
+    });
+    expect(detailed.json().task.status).toBe("ready");
+    expect(detailed.json().task.execution.status).toBe("cancelled");
+    expect(detailed.json().task.execution.output).toContain("## Work cancelled");
+    expect(detailed.json().task.execution.output).not.toContain("Late result");
+    await app.close();
+    store.close();
+  });
+
+  it("cancels a queued task execution even when no in-memory run owns it", async () => {
+    const { app, store } = createTestApp();
+    const task = store.createTask({
+      title: "Queued run",
+      status: "in_progress",
+    });
+    store.createTaskExecution({
+      taskId: task.id,
+      provider: "openai",
+      model: "gpt-5.5",
+      status: "queued",
+      progressSummary: "Request queued.",
+      events: [{ id: "", kind: "queued", message: "Request queued.", createdAt: "" }],
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/abort`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().task.status).toBe("ready");
+    expect(response.json().task.execution.status).toBe("cancelled");
+    expect(
+      response
+        .json()
+        .task.execution.events.map((event: { kind: string }) => event.kind),
+    ).toEqual(["queued", "cancelled"]);
     await app.close();
     store.close();
   });
@@ -1191,6 +1282,59 @@ describe("routes", () => {
         request.systemPrompt?.includes("durable memory reviewer"),
       )?.messages.at(-1)?.content,
     ).toContain("Then reply in one short sentence");
+    await app.close();
+    store.close();
+  });
+
+  it("cancels queued follow-ups together with the active task run", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "routes-abort-queue-"));
+    tempDirs.push(dir);
+    const store = new BoardStore(path.join(dir, "board.db"));
+    const providerRouter = new BlockingTaskProviderRouter(store);
+    const app = buildServer({
+      store,
+      providerRouter,
+      memoryRoot: dir,
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Stop queued follow-up",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task as Task;
+    await waitUntil(() => providerRouter.toolRequests.length === 1);
+
+    const followUp = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up`,
+      payload: { prompt: "This should not run after cancellation." },
+    });
+    expect(followUp.statusCode).toBe(201);
+    expect(followUp.json().task.execution.status).toBe("queued");
+
+    const abort = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/abort`,
+    });
+    expect(abort.statusCode).toBe(200);
+    expect(abort.json().task.status).toBe("ready");
+    expect(abort.json().task.execution.status).toBe("cancelled");
+    expect(abort.json().task.execution.previousExecutions[0].status).toBe("cancelled");
+
+    providerRouter.resolveNextToolRequest("Late result.");
+    await flushQueuedPromises();
+    expect(providerRouter.toolRequests).toHaveLength(1);
+
+    const detailed = await app.inject({
+      method: "GET",
+      url: `/api/tasks/${task.id}`,
+    });
+    expect(detailed.json().task.execution.status).toBe("cancelled");
+    expect(detailed.json().task.execution.previousExecutions[0].status).toBe("cancelled");
     await app.close();
     store.close();
   });

@@ -83,16 +83,28 @@ export type ExecutedLocalTool = {
   summary: string;
 };
 
-export async function executeLocalToolCall(call: ToolCall): Promise<ExecutedLocalTool> {
+export async function executeLocalToolCall(
+  call: ToolCall,
+  options: { signal?: AbortSignal } = {},
+): Promise<ExecutedLocalTool> {
   const started = Date.now();
   try {
-    const content = await executeToolByName(call.name, asRecord(call.arguments));
+    throwIfToolRunCancelled(options.signal);
+    const content = await executeToolByName(
+      call.name,
+      asRecord(call.arguments),
+      options,
+    );
+    throwIfToolRunCancelled(options.signal);
     const isError = !toolResultOk(content);
     return {
       message: buildToolResult(call, content, isError),
       summary: summarizeToolCall(call, content, Date.now() - started),
     };
   } catch (err) {
+    if (isToolRunCancellationError(err)) {
+      throw err;
+    }
     const message = err instanceof Error ? err.message : String(err);
     const content = JSON.stringify({ ok: false, error: message }, null, 2);
     return {
@@ -105,18 +117,22 @@ export async function executeLocalToolCall(call: ToolCall): Promise<ExecutedLoca
 async function executeToolByName(
   name: string,
   args: Record<string, unknown>,
+  options: { signal?: AbortSignal },
 ): Promise<string> {
   if (name === "list_files") {
+    throwIfToolRunCancelled(options.signal);
     return listFiles(args);
   }
   if (name === "read_file") {
+    throwIfToolRunCancelled(options.signal);
     return readTextFile(args);
   }
   if (name === "write_file") {
+    throwIfToolRunCancelled(options.signal);
     return writeTextFile(args);
   }
   if (name === "run_shell") {
-    return runShell(args);
+    return runShell(args, options);
   }
   throw new Error(`Unknown local tool: ${name}`);
 }
@@ -206,7 +222,10 @@ async function writeTextFile(args: Record<string, unknown>): Promise<string> {
   );
 }
 
-async function runShell(args: Record<string, unknown>): Promise<string> {
+async function runShell(
+  args: Record<string, unknown>,
+  options: { signal?: AbortSignal },
+): Promise<string> {
   const cmd = requiredString(args.cmd, "cmd");
   const cwd = resolveToolPath(".", stringArg(args.cwd));
   const timeoutMs = clampNumber(
@@ -221,7 +240,7 @@ async function runShell(args: Record<string, unknown>): Promise<string> {
     1_000,
     MAX_OUTPUT_LIMIT,
   );
-  const result = await spawnShell(cmd, cwd, timeoutMs, maxOutputChars);
+  const result = await spawnShell(cmd, cwd, timeoutMs, maxOutputChars, options.signal);
   return JSON.stringify({ ok: result.exitCode === 0, cmd, cwd, ...result }, null, 2);
 }
 
@@ -230,6 +249,7 @@ function spawnShell(
   cwd: string,
   timeoutMs: number,
   maxOutputChars: number,
+  signal?: AbortSignal,
 ): Promise<{
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -239,6 +259,7 @@ function spawnShell(
   truncated: boolean;
 }> {
   return new Promise((resolve, reject) => {
+    throwIfToolRunCancelled(signal);
     const child = spawn(cmd, {
       cwd,
       shell: true,
@@ -249,10 +270,35 @@ function spawnShell(
     let stderr = "";
     let truncated = false;
     let settled = false;
-    const timer = setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function cleanup() {
+      clearTimeout(timer);
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = undefined;
+      }
+      signal?.removeEventListener("abort", abortRun);
+    }
+
+    function abortRun() {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abortRun);
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 1_500);
+      reject(createToolRunCancellationError(signal));
+    }
+
+    timer = setTimeout(() => {
       child.kill("SIGTERM");
       truncated = true;
       settled = true;
+      cleanup();
       resolve({
         exitCode: null,
         signal: "SIGTERM",
@@ -262,6 +308,7 @@ function spawnShell(
         truncated,
       });
     }, timeoutMs);
+    signal?.addEventListener("abort", abortRun, { once: true });
 
     const append = (value: Buffer, target: "stdout" | "stderr") => {
       const text = value.toString("utf8");
@@ -276,14 +323,14 @@ function spawnShell(
     child.stdout?.on("data", (chunk: Buffer) => append(chunk, "stdout"));
     child.stderr?.on("data", (chunk: Buffer) => append(chunk, "stderr"));
     child.on("error", (err) => {
-      clearTimeout(timer);
+      cleanup();
       if (!settled) {
         settled = true;
         reject(err);
       }
     });
     child.on("close", (exitCode, signal) => {
-      clearTimeout(timer);
+      cleanup();
       if (!settled) {
         settled = true;
         resolve({
@@ -297,6 +344,30 @@ function spawnShell(
       }
     });
   });
+}
+
+function throwIfToolRunCancelled(signal?: AbortSignal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw createToolRunCancellationError(signal);
+}
+
+function createToolRunCancellationError(signal?: AbortSignal) {
+  const reason = signal?.reason;
+  if (reason instanceof Error) {
+    return reason;
+  }
+  const error = new Error(typeof reason === "string" ? reason : "Task run cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function isToolRunCancellationError(err: unknown) {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  return err.name === "AbortError" || /\b(abort|aborted|cancelled|canceled)\b/i.test(err.message);
 }
 
 function buildToolResult(

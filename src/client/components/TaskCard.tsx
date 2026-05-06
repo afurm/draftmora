@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Clock3, LoaderCircle } from "lucide-react";
+import { AlertTriangle, Check, CircleStop, Clock3, LoaderCircle } from "lucide-react";
 import type { DragEvent, KeyboardEvent } from "react";
 import type { FocusArea, Priority, Task } from "../../shared/types";
 import { PRIORITY_LABELS } from "../../shared/types";
@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getFocusAreaStyle } from "../focus-areas";
 
-type VisibleExecutionStatus = "queued" | "running";
+type VisibleExecutionStatus = "queued" | "running" | "cancelled";
 
 export function TaskCard(props: {
   task: Task;
@@ -84,10 +84,13 @@ export function TaskCard(props: {
           </Badge>
           {props.task.execution &&
             (props.task.execution.status === "queued" ||
-              props.task.execution.status === "running") && (
+              props.task.execution.status === "running" ||
+              props.task.execution.status === "cancelled") && (
               <Badge variant={executionBadgeVariant(props.task.execution.status)}>
                 {props.task.execution.status === "running" ? (
                   <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                ) : props.task.execution.status === "cancelled" ? (
+                  <CircleStop data-icon="inline-start" />
                 ) : (
                   <Clock3 data-icon="inline-start" />
                 )}
@@ -106,6 +109,9 @@ function taskStatusIcon(task: Task) {
   }
   if (task.execution?.status === "queued") {
     return <Clock3 />;
+  }
+  if (task.execution?.status === "cancelled") {
+    return <CircleStop />;
   }
   if (task.status === "done") {
     return <Check />;
@@ -131,5 +137,11 @@ function executionBadgeVariant(status: VisibleExecutionStatus): "secondary" | "o
 }
 
 function formatExecutionStatus(status: VisibleExecutionStatus): string {
-  return status === "running" ? "Running" : "Queued";
+  if (status === "running") {
+    return "Running";
+  }
+  if (status === "cancelled") {
+    return "Cancelled";
+  }
+  return "Queued";
 }

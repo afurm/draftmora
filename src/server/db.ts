@@ -193,6 +193,7 @@ const TASK_EXECUTION_STATUS_VALUES = new Set<string>([
   "running",
   "succeeded",
   "failed",
+  "cancelled",
 ]);
 const TASK_EXECUTION_REQUEST_KIND_VALUES = new Set<string>([
   "initial",

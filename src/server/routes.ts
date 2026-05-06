@@ -32,6 +32,7 @@ import {
 import { ProviderRouter } from "./providers/router";
 import {
   abortTaskExecutionForTask,
+  forceQueuedTaskFollowUpExecutionForTask,
   startTaskExecutionForTask,
   startTaskFollowUpExecutionForTask,
 } from "./task-executor";
@@ -58,6 +59,7 @@ const taskUpdateSchema = z.object({
 
 const taskFollowUpSchema = z.object({
   prompt: z.string().trim().min(1),
+  mode: z.enum(["queue", "interrupt"]).optional().default("queue"),
 });
 
 const settingsPatchSchema = z.object({
@@ -252,6 +254,7 @@ export function buildServer(options: {
       task: followUpTask,
       provider: store.getSettings().selectedProvider,
       followUp: input.prompt,
+      interruptExisting: input.mode === "interrupt",
       runInline: options.runTaskExecutionsInline,
       memoryRoot,
       memoryLogger: memoryReviewLogger,
@@ -279,6 +282,32 @@ export function buildServer(options: {
       execution: result.execution,
     };
   });
+
+  app.post<{ Params: { id: string; executionId: string } }>(
+    "/api/tasks/:id/follow-up/:executionId/force",
+    async (request, reply) => {
+      const result = await forceQueuedTaskFollowUpExecutionForTask({
+        store,
+        router: providerRouter,
+        taskId: request.params.id,
+        executionId: request.params.executionId,
+        provider: store.getSettings().selectedProvider,
+        runInline: options.runTaskExecutionsInline,
+        memoryRoot,
+        memoryLogger: memoryReviewLogger,
+      });
+      if (!result.found) {
+        return reply.status(404).send({ error: result.reason });
+      }
+      if (!result.forced) {
+        return reply.status(409).send({ error: result.reason ?? "Follow-up cannot be forced." });
+      }
+      return {
+        task: store.getTask(request.params.id) ?? result.task,
+        execution: result.execution,
+      };
+    },
+  );
 
   app.delete<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
     if (!store.deleteTask(request.params.id)) {

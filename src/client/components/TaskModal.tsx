@@ -20,6 +20,7 @@ import {
   Trash2,
   UserRound,
   X,
+  Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -35,6 +36,7 @@ import type {
   TaskCreateInput,
   TaskExecution,
   TaskExecutionArtifact,
+  TaskFollowUpMode,
   TaskStatus,
 } from "../../shared/types";
 import { COLUMN_LABELS, PRIORITIES, TASK_STATUSES } from "../../shared/types";
@@ -172,6 +174,7 @@ type PendingFollowUp = {
   id: string;
   prompt: string;
   content: string;
+  mode: TaskFollowUpMode;
   createdAt: string;
   status: "sending" | "failed";
 };
@@ -183,8 +186,11 @@ type TaskThreadMessage =
       content: string;
       createdAt: string;
       label: string;
-      pending?: PendingFollowUp["status"];
-      prompt?: string;
+  pending?: PendingFollowUp["status"];
+  prompt?: string;
+  mode: TaskFollowUpMode;
+  executionId?: string;
+  canForce?: boolean;
     }
   | { type: "agent_result"; id: string; execution: TaskExecution; runIndex: number }
   | { type: "next_action"; id: string; execution: TaskExecution; content: string }
@@ -209,8 +215,9 @@ export function TaskModal(props: {
   focusAreas: FocusArea[];
   onClose: () => void;
   onDelete?: () => Promise<void>;
-  onAskFollowUp?: (prompt: string) => Promise<void>;
+  onAskFollowUp?: (prompt: string, mode?: TaskFollowUpMode) => Promise<void>;
   onAbortExecution?: () => Promise<void>;
+  onForceFollowUp?: (executionId: string) => Promise<void>;
   onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
   onSave: (input: TaskCreateInput) => Promise<void>;
 }) {
@@ -312,6 +319,7 @@ export function TaskModal(props: {
       onTitleTouched={() => setTitleTouched(true)}
       onAskFollowUp={props.onAskFollowUp}
       onAbortExecution={props.onAbortExecution}
+      onForceFollowUp={props.onForceFollowUp}
       onCreateDraft={props.onCreateDraft}
     />
   );
@@ -404,13 +412,15 @@ function TaskDetailWorkspace(props: {
   onPriorityChange: (value: Priority) => void;
   onFocusAreaChange: (value: string) => void;
   onTitleTouched: () => void;
-  onAskFollowUp?: (prompt: string) => Promise<void>;
+  onAskFollowUp?: (prompt: string, mode?: TaskFollowUpMode) => Promise<void>;
   onAbortExecution?: () => Promise<void>;
+  onForceFollowUp?: (executionId: string) => Promise<void>;
   onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
 }) {
   const [followUp, setFollowUp] = useState("");
   const [asking, setAsking] = useState(false);
   const [aborting, setAborting] = useState(false);
+  const [forcingExecutionId, setForcingExecutionId] = useState<string | null>(null);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [nextActionConsumed, setNextActionConsumed] = useState(false);
   const [pendingFollowUps, setPendingFollowUps] = useState<PendingFollowUp[]>([]);
@@ -566,6 +576,7 @@ function TaskDetailWorkspace(props: {
     promptOverride?: string,
     displayOverride?: string,
     pendingId?: string,
+    mode: TaskFollowUpMode = "queue",
   ) {
     const prompt = (promptOverride ?? followUp).trim();
     if (!prompt || !props.onAskFollowUp) {
@@ -578,20 +589,23 @@ function TaskDetailWorkspace(props: {
     setError(null);
     setPendingFollowUps((current) =>
       pendingId
-        ? current.map((entry) => (entry.id === pendingId ? { ...entry, status: "sending" } : entry))
+        ? current.map((entry) =>
+            entry.id === pendingId ? { ...entry, mode, status: "sending" } : entry,
+          )
         : [
             ...current,
             {
               id,
               prompt,
               content,
+              mode,
               createdAt: new Date().toISOString(),
               status: "sending",
             },
           ],
     );
     try {
-      await props.onAskFollowUp(prompt);
+      await props.onAskFollowUp(prompt, mode);
       setPendingFollowUps((current) => current.filter((entry) => entry.id !== id));
       if (!promptOverride) {
         setFollowUp("");
@@ -600,7 +614,9 @@ function TaskDetailWorkspace(props: {
         setNextActionConsumed(true);
       }
       setNotice(
-        running
+        mode === "interrupt"
+          ? "Forced request queued."
+          : running
           ? "Follow-up queued. It will start after the current work finishes."
           : "Follow-up queued.",
       );
@@ -631,8 +647,25 @@ function TaskDetailWorkspace(props: {
     }
   }
 
+  async function forceFollowUp(executionId: string) {
+    if (!props.onForceFollowUp) {
+      return;
+    }
+    setForcingExecutionId(executionId);
+    setNotice(null);
+    setError(null);
+    try {
+      await props.onForceFollowUp(executionId);
+      setNotice("Forced request queued.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setForcingExecutionId(null);
+    }
+  }
+
   async function retryPendingFollowUp(entry: PendingFollowUp) {
-    await askFollowUp(entry.prompt, entry.content, entry.id);
+    await askFollowUp(entry.prompt, entry.content, entry.id, entry.mode);
   }
 
   async function runNextActionAsFollowUp() {
@@ -809,8 +842,10 @@ function TaskDetailWorkspace(props: {
             wide={inspectorCollapsed}
             nextActionConsumed={nextActionConsumed}
             creatingDraft={creatingDraft}
+            forcingExecutionId={forcingExecutionId}
             onFollowUpChange={setFollowUp}
             onAskFollowUp={() => void askFollowUp()}
+            onForceFollowUp={(executionId) => void forceFollowUp(executionId)}
             onRetryPendingFollowUp={(entry) => void retryPendingFollowUp(entry)}
             onRunNextAction={nextAction && props.onAskFollowUp ? () => void runNextActionAsFollowUp() : undefined}
             onCreateDraft={nextAction && props.onCreateDraft ? () => void createDraftFromNextAction() : undefined}
@@ -1102,8 +1137,10 @@ function TaskConversation(props: {
   wide: boolean;
   nextActionConsumed: boolean;
   creatingDraft: boolean;
+  forcingExecutionId: string | null;
   onFollowUpChange: (value: string) => void;
   onAskFollowUp: () => void;
+  onForceFollowUp: (executionId: string) => void;
   onRetryPendingFollowUp: (entry: PendingFollowUp) => void;
   onRunNextAction?: () => void;
   onCreateDraft?: () => void;
@@ -1139,7 +1176,9 @@ function TaskConversation(props: {
             pendingFollowUps={props.pendingFollowUps}
             nextActionConsumed={props.nextActionConsumed}
             creatingDraft={props.creatingDraft}
+            forcingExecutionId={props.forcingExecutionId}
             onRetryPendingFollowUp={props.onRetryPendingFollowUp}
+            onForceFollowUp={props.onForceFollowUp}
             onRunNextAction={props.onRunNextAction}
             onCreateDraft={props.onCreateDraft}
           />
@@ -1177,7 +1216,9 @@ function TaskThread(props: {
   pendingFollowUps: PendingFollowUp[];
   nextActionConsumed: boolean;
   creatingDraft: boolean;
+  forcingExecutionId: string | null;
   onRetryPendingFollowUp: (entry: PendingFollowUp) => void;
+  onForceFollowUp: (executionId: string) => void;
   onRunNextAction?: () => void;
   onCreateDraft?: () => void;
 }) {
@@ -1195,7 +1236,13 @@ function TaskThread(props: {
           message={message}
           nextActionConsumed={props.nextActionConsumed}
           creatingDraft={props.creatingDraft}
+          forcing={Boolean(
+            message.type === "user_request" &&
+              message.executionId &&
+              props.forcingExecutionId === message.executionId,
+          )}
           onRetryPendingFollowUp={props.onRetryPendingFollowUp}
+          onForceFollowUp={props.onForceFollowUp}
           onRunNextAction={props.onRunNextAction}
           onCreateDraft={props.onCreateDraft}
         />
@@ -1221,7 +1268,9 @@ function TaskThreadMessageRow(props: {
   message: TaskThreadMessage;
   nextActionConsumed: boolean;
   creatingDraft: boolean;
+  forcing: boolean;
   onRetryPendingFollowUp: (entry: PendingFollowUp) => void;
+  onForceFollowUp: (executionId: string) => void;
   onRunNextAction?: () => void;
   onCreateDraft?: () => void;
 }) {
@@ -1246,25 +1295,45 @@ function TaskThreadMessageRow(props: {
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
               {message.content}
             </p>
-            {message.pending === "failed" && message.prompt && (
+            {((message.pending === "failed" && message.prompt) || message.canForce) && (
               <ItemFooter className="justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    props.onRetryPendingFollowUp({
-                      id: message.id,
-                      prompt: message.prompt!,
-                      content: message.content,
-                      createdAt: message.createdAt,
-                      status: "failed",
-                    })
-                  }
-                >
-                  <RotateCcw data-icon="inline-start" />
-                  Retry
-                </Button>
+                {message.pending === "failed" && message.prompt && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      props.onRetryPendingFollowUp({
+                        id: message.id,
+                        prompt: message.prompt!,
+                        content: message.content,
+                        mode: message.mode,
+                        createdAt: message.createdAt,
+                        status: "failed",
+                      })
+                    }
+                  >
+                    <RotateCcw data-icon="inline-start" />
+                    Retry
+                  </Button>
+                )}
+                {message.canForce && message.executionId && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="text-amber-700 dark:text-amber-300"
+                    disabled={props.forcing}
+                    onClick={() => props.onForceFollowUp(message.executionId!)}
+                  >
+                    {props.forcing ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <Zap data-icon="inline-start" />
+                    )}
+                    {props.forcing ? "Forcing..." : "Force request"}
+                  </Button>
+                )}
               </ItemFooter>
             )}
           </ItemContent>
@@ -1392,19 +1461,21 @@ function TaskThreadComposer(props: {
             {running ? <Clock3 /> : <MessageSquareText />}
             <span>{running ? "Queues behind current work" : "Attached to task"}</span>
           </InputGroupText>
-          <InputGroupButton
-            type="button"
-            variant="default"
-            onClick={props.onAskFollowUp}
-            disabled={props.asking || !props.followUp.trim()}
-          >
-            {props.asking ? (
-              <LoaderCircle className="animate-spin" data-icon="inline-start" />
-            ) : (
-              <Send data-icon="inline-start" />
-            )}
-            {props.asking ? "Sending..." : "Send"}
-          </InputGroupButton>
+          <div className="flex items-center gap-1.5">
+            <InputGroupButton
+              type="button"
+              variant="default"
+              onClick={props.onAskFollowUp}
+              disabled={props.asking || !props.followUp.trim()}
+            >
+              {props.asking ? (
+                <LoaderCircle className="animate-spin" data-icon="inline-start" />
+              ) : (
+                <Send data-icon="inline-start" />
+              )}
+              {props.asking ? "Sending..." : "Send"}
+            </InputGroupButton>
+          </div>
         </InputGroupAddon>
       </InputGroup>
       {running && <FieldDescription>This will queue behind the active run.</FieldDescription>}
@@ -1789,12 +1860,18 @@ function buildTaskThreadMessages(
       content: originalRequest,
       createdAt: task.createdAt,
       label: "Original request",
+      mode: "queue",
     });
   }
 
   const executions = getTaskExecutionHistory(task);
   executions.forEach((execution, index) => {
     const isLatestExecution = execution === task.execution;
+    const hasOtherActiveExecution = executions.some(
+      (otherExecution) =>
+        otherExecution.id !== execution.id &&
+        (otherExecution.status === "queued" || otherExecution.status === "running"),
+    );
     const requestPrompt = displayExecutionRequestPrompt(execution);
     if (requestPrompt) {
       messages.push({
@@ -1803,6 +1880,12 @@ function buildTaskThreadMessages(
         content: requestPrompt,
         createdAt: execution.createdAt,
         label: execution.requestKind === "follow_up" ? "Follow-up" : "Request",
+        mode: "queue",
+        executionId: execution.id,
+        canForce:
+          execution.requestKind === "follow_up" &&
+          execution.status === "queued" &&
+          hasOtherActiveExecution,
       });
     }
     if (execution.output.trim() || (isLatestExecution && isExecutionActive(execution)) || execution.error) {
@@ -1839,9 +1922,10 @@ function buildTaskThreadMessages(
       id: entry.id,
       content: entry.content,
       createdAt: entry.createdAt,
-      label: "Follow-up",
+      label: entry.mode === "interrupt" ? "Forced follow-up" : "Follow-up",
       pending: entry.status,
       prompt: entry.prompt,
+      mode: entry.mode,
     });
   });
 

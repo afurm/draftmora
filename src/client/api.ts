@@ -10,6 +10,8 @@ import type {
   Task,
   TaskCreateInput,
   TaskExecution,
+  TaskFollowUpInput,
+  TaskFollowUpMode,
   TaskUpdateInput,
 } from "../shared/types";
 
@@ -56,14 +58,20 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  async createTaskFollowUp(id: string, prompt: string) {
+  async createTaskFollowUp(id: string, prompt: string, mode: TaskFollowUpMode = "queue") {
+    const input: TaskFollowUpInput = { prompt, mode };
     return request<TaskMutationResponse>(`/api/tasks/${id}/follow-up`, {
       method: "POST",
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(input),
     });
   },
   async abortTaskRun(id: string) {
     return request<TaskMutationResponse>(`/api/tasks/${id}/abort`, { method: "POST" });
+  },
+  async forceTaskFollowUp(id: string, executionId: string) {
+    return request<TaskMutationResponse>(`/api/tasks/${id}/follow-up/${executionId}/force`, {
+      method: "POST",
+    });
   },
   async deleteTask(id: string) {
     return request<void>(`/api/tasks/${id}`, { method: "DELETE" });

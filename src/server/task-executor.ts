@@ -36,6 +36,7 @@ type StartTaskExecutionInput = {
   runInline?: boolean;
   memoryRoot?: string;
   memoryLogger?: MemoryReviewLogger;
+  interruptExisting?: boolean;
 };
 
 export async function startTaskExecutionForTask(
@@ -58,7 +59,9 @@ export async function startTaskFollowUpExecutionForTask(
     buildPrompt: (task) => buildTaskFollowUpPrompt(task, input.followUp),
     requestKind: "follow_up",
     requestPrompt: () => input.followUp,
-    queuedMessage: "Follow-up queued.",
+    queuedMessage: input.interruptExisting
+      ? "Forced follow-up queued."
+      : "Follow-up queued.",
   });
 }
 
@@ -67,6 +70,16 @@ type AbortTaskExecutionResult =
   | {
       found: true;
       cancelled: boolean;
+      reason?: string;
+      task: Task;
+      execution?: TaskExecution;
+    };
+
+type ForceQueuedFollowUpResult =
+  | { found: false; forced: false; reason: string }
+  | {
+      found: true;
+      forced: boolean;
       reason?: string;
       task: Task;
       execution?: TaskExecution;
@@ -111,6 +124,94 @@ export function abortTaskExecutionForTask(input: {
   };
 }
 
+export async function forceQueuedTaskFollowUpExecutionForTask(input: {
+  store: BoardStore;
+  router: ProviderRouter;
+  taskId: string;
+  executionId: string;
+  provider: ProviderId;
+  runInline?: boolean;
+  memoryRoot?: string;
+  memoryLogger?: MemoryReviewLogger;
+}): Promise<ForceQueuedFollowUpResult> {
+  const task = input.store.getTask(input.taskId);
+  if (!task) {
+    return { found: false, forced: false, reason: "Task not found." };
+  }
+  const execution = input.store.getTaskExecution(input.executionId);
+  if (!execution || execution.taskId !== task.id) {
+    return { found: false, forced: false, reason: "Queued follow-up not found." };
+  }
+  if (execution.requestKind !== "follow_up" || execution.status !== "queued") {
+    return {
+      found: true,
+      forced: false,
+      reason: "Only queued follow-ups can be forced.",
+      task,
+      execution,
+    };
+  }
+
+  cancelAbortableExecutions({
+    store: input.store,
+    task,
+    exceptExecutionId: execution.id,
+  });
+  const taskForRun = input.store.updateTask(task.id, { status: "in_progress" }) ?? task;
+  const controller = new AbortController();
+  activeTaskExecutionRuns.set(execution.id, {
+    taskId: task.id,
+    executionId: execution.id,
+    controller,
+  });
+  const updatedExecution =
+    input.store.updateTaskExecution(execution.id, {
+      progressSummary: "Forced follow-up queued.",
+      events: [
+        ...execution.events,
+        {
+          id: "",
+          kind: "queued",
+          message: "Forced follow-up queued.",
+          createdAt: "",
+        },
+      ],
+    }) ?? execution;
+  const run = createTaskExecutionRun(
+    {
+      store: input.store,
+      router: input.router,
+      task: taskForRun,
+      provider: input.provider,
+      memoryRoot: input.memoryRoot,
+      memoryLogger: input.memoryLogger,
+      buildPrompt: (task) => buildTaskFollowUpPrompt(task, updatedExecution.requestPrompt),
+    },
+    {
+      task: taskForRun,
+      execution: updatedExecution,
+      controller,
+      shouldMarkTaskInProgress: true,
+      model: updatedExecution.model ?? input.store.getProviderConfig(input.provider).model,
+    },
+  );
+  const queuedRun = enqueueTaskExecution(task.id, run, { replaceExistingQueue: true });
+  if (input.runInline) {
+    await queuedRun;
+  } else {
+    void queuedRun.catch((err) => {
+      console.warn(err instanceof Error ? err.message : String(err));
+    });
+  }
+  const latestTask = input.store.getTask(task.id) ?? taskForRun;
+  return {
+    found: true,
+    forced: true,
+    task: latestTask,
+    execution: input.store.getTaskExecution(execution.id) ?? updatedExecution,
+  };
+}
+
 async function startExecution(
   input: StartTaskExecutionInput & {
     buildPrompt: (task: Task) => string;
@@ -119,38 +220,86 @@ async function startExecution(
     queuedMessage: string;
   },
 ): Promise<TaskExecution> {
-  const shouldMarkTaskInProgress = input.task.status !== "done";
+  let task = input.task;
+  if (input.interruptExisting) {
+    abortTaskExecutionForTask({
+      store: input.store,
+      taskId: input.task.id,
+    });
+    task = input.store.getTask(input.task.id) ?? input.task;
+  }
+  const shouldMarkTaskInProgress = task.status !== "done";
   if (shouldMarkTaskInProgress) {
-    input.store.updateTask(input.task.id, { status: "in_progress" });
+    input.store.updateTask(task.id, { status: "in_progress" });
   }
   const config = input.store.getProviderConfig(input.provider);
   const execution = input.store.createTaskExecution({
-    taskId: input.task.id,
+    taskId: task.id,
     provider: input.provider,
     model: config.model,
     requestKind: input.requestKind,
-    requestPrompt: input.requestPrompt(input.task),
+    requestPrompt: input.requestPrompt(task),
     status: "queued",
     progressSummary: input.queuedMessage,
     events: [{ id: "", kind: "queued", message: input.queuedMessage, createdAt: "" }],
   });
   const controller = new AbortController();
   activeTaskExecutionRuns.set(execution.id, {
-    taskId: input.task.id,
+    taskId: task.id,
     executionId: execution.id,
     controller,
   });
-  const run = async () => {
-    let taskAtStart: Task = input.task;
+  const run = createTaskExecutionRun(input, {
+    task,
+    execution,
+    controller,
+    shouldMarkTaskInProgress,
+    model: config.model,
+  });
+  const queuedRun = enqueueTaskExecution(task.id, run, {
+    replaceExistingQueue: input.interruptExisting === true,
+  });
+  if (input.runInline) {
+    await queuedRun;
+  } else {
+    void queuedRun.catch((err) => {
+      console.warn(err instanceof Error ? err.message : String(err));
+    });
+  }
+  return input.store.getTaskExecution(execution.id) ?? execution;
+}
+
+function createTaskExecutionRun(
+  input: StartTaskExecutionInput & {
+    buildPrompt: (task: Task) => string;
+  },
+  runInput: {
+    task: Task;
+    execution: TaskExecution;
+    controller: AbortController;
+    shouldMarkTaskInProgress: boolean;
+    model: string;
+  },
+): () => Promise<void> {
+  const { task, execution, controller, shouldMarkTaskInProgress, model } = runInput;
+  return async () => {
+    let taskAtStart: Task = task;
     let events = execution.events;
     try {
-      const existingTask = input.store.getTask(input.task.id);
+      const existingTask = input.store.getTask(task.id);
       if (!existingTask) {
         return;
       }
+      const existingExecution = input.store.getTaskExecution(execution.id);
+      if (!existingExecution || existingExecution.status !== "queued") {
+        return;
+      }
       taskAtStart = existingTask;
-      events = input.store.getTaskExecution(execution.id)?.events ?? execution.events;
-      if (isTaskRunCancelled(controller.signal) || isTaskExecutionAlreadyCancelled(input.store, execution.id)) {
+      events = existingExecution.events.length > 0 ? existingExecution.events : execution.events;
+      if (
+        isTaskRunCancelled(controller.signal) ||
+        isTaskExecutionAlreadyCancelled(input.store, execution.id)
+      ) {
         markTaskExecutionCancelled({
           store: input.store,
           task: taskAtStart,
@@ -160,7 +309,7 @@ async function startExecution(
         return;
       }
       if (shouldMarkTaskInProgress) {
-        const updatedTask = input.store.updateTask(input.task.id, { status: "in_progress" });
+        const updatedTask = input.store.updateTask(task.id, { status: "in_progress" });
         if (!updatedTask) {
           return;
         }
@@ -184,7 +333,10 @@ async function startExecution(
       });
       events = running?.events ?? events;
       const appendProgressEvent = (kind: TaskExecutionEvent["kind"], message: string) => {
-        if (isTaskRunCancelled(controller.signal) || isTaskExecutionAlreadyCancelled(input.store, execution.id)) {
+        if (
+          isTaskRunCancelled(controller.signal) ||
+          isTaskExecutionAlreadyCancelled(input.store, execution.id)
+        ) {
           return;
         }
         events = [
@@ -202,18 +354,21 @@ async function startExecution(
         });
         events = updated?.events ?? events;
       };
-      const boardContext = buildBoardTaskContext(input.store.listTasks(), input.task.id);
+      const boardContext = buildBoardTaskContext(input.store.listTasks(), task.id);
       const systemPrompt = buildTaskSystemPrompt(prompt, boardContext, input.memoryRoot);
       const result = await completeTaskWithLocalTools({
         router: input.router,
         provider: input.provider,
-        model: config.model,
+        model,
         systemPrompt,
         prompt,
         signal: controller.signal,
         onToolProgress: (message) => appendProgressEvent("progress", message),
       });
-      if (isTaskRunCancelled(controller.signal) || isTaskExecutionAlreadyCancelled(input.store, execution.id)) {
+      if (
+        isTaskRunCancelled(controller.signal) ||
+        isTaskExecutionAlreadyCancelled(input.store, execution.id)
+      ) {
         markTaskExecutionCancelled({
           store: input.store,
           task: taskAtStart,
@@ -237,12 +392,12 @@ async function startExecution(
           },
         ],
       });
-      input.store.updateTask(input.task.id, { status: "done" });
+      input.store.updateTask(task.id, { status: "done" });
       throwIfTaskRunCancelled(controller.signal);
       await reviewAndApplyMemory({
         providerRouter: input.router,
         provider: input.provider,
-        model: config.model,
+        model,
         messages: [
           { role: "user", content: prompt },
           { role: "assistant", content: result || "Finished." },
@@ -257,7 +412,7 @@ async function startExecution(
         isTaskRunCancelled(controller.signal) ||
         (controller.signal.aborted && isTaskRunCancellationError(err))
       ) {
-        const task = input.store.getTask(input.task.id) ?? taskAtStart;
+        const task = input.store.getTask(taskAtStart.id) ?? taskAtStart;
         markTaskExecutionCancelled({
           store: input.store,
           task,
@@ -287,23 +442,14 @@ async function startExecution(
           },
         ],
       });
-      input.store.updateTask(input.task.id, { status: "needs_attention" });
+      input.store.updateTask(task.id, { status: "needs_attention" });
     } finally {
       const activeRun = activeTaskExecutionRuns.get(execution.id);
-      if (activeRun?.executionId === execution.id) {
+      if (activeRun?.executionId === execution.id && activeRun.controller === controller) {
         activeTaskExecutionRuns.delete(execution.id);
       }
     }
   };
-  const queuedRun = enqueueTaskExecution(input.task.id, run);
-  if (input.runInline) {
-    await queuedRun;
-  } else {
-    void queuedRun.catch((err) => {
-      console.warn(err instanceof Error ? err.message : String(err));
-    });
-  }
-  return input.store.getTaskExecution(execution.id) ?? execution;
 }
 
 function getAbortableExecutions(store: BoardStore, taskId: string): TaskExecution[] {
@@ -311,6 +457,27 @@ function getAbortableExecutions(store: BoardStore, taskId: string): TaskExecutio
     .listTaskExecutions(taskId)
     .filter((execution) => execution.status === "running" || execution.status === "queued")
     .reverse();
+}
+
+function cancelAbortableExecutions(input: {
+  store: BoardStore;
+  task: Task;
+  exceptExecutionId?: string;
+}): TaskExecution[] {
+  return getAbortableExecutions(input.store, input.task.id)
+    .filter((execution) => execution.id !== input.exceptExecutionId)
+    .map((execution) => {
+      activeTaskExecutionRuns
+        .get(execution.id)
+        ?.controller.abort(new Error(CANCELLED_BY_USER_MESSAGE));
+      return markTaskExecutionCancelled({
+        store: input.store,
+        task: input.task,
+        executionId: execution.id,
+        events: execution.events,
+      });
+    })
+    .filter((execution): execution is TaskExecution => Boolean(execution));
 }
 
 function isTaskExecutionAlreadyCancelled(store: BoardStore, executionId: string) {
@@ -356,9 +523,16 @@ function markTaskExecutionCancelled(input: {
 }
 
 function releaseCancelledTask(store: BoardStore, task: Task) {
-  if (task.status === "in_progress") {
+  const latestTask = store.getTask(task.id) ?? task;
+  if (latestTask.status === "in_progress" && !hasAbortableTaskExecution(store, task.id)) {
     store.updateTask(task.id, { status: "ready" });
   }
+}
+
+function hasAbortableTaskExecution(store: BoardStore, taskId: string) {
+  return store
+    .listTaskExecutions(taskId)
+    .some((execution) => execution.status === "running" || execution.status === "queued");
 }
 
 function isTaskRunCancelled(signal?: AbortSignal) {
@@ -385,8 +559,14 @@ function isTaskRunCancellationError(err: unknown) {
   return err.name === "AbortError" || /\b(abort|aborted|cancelled|canceled)\b/i.test(err.message);
 }
 
-function enqueueTaskExecution(taskId: string, run: () => Promise<void>): Promise<void> {
-  const previous = taskExecutionQueues.get(taskId) ?? Promise.resolve();
+function enqueueTaskExecution(
+  taskId: string,
+  run: () => Promise<void>,
+  options: { replaceExistingQueue?: boolean } = {},
+): Promise<void> {
+  const previous = options.replaceExistingQueue
+    ? Promise.resolve()
+    : taskExecutionQueues.get(taskId) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(run);
   const tracked = current.finally(() => {
     if (taskExecutionQueues.get(taskId) === tracked) {

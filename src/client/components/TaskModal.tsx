@@ -23,6 +23,11 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
+import type {
   FocusArea,
   Priority,
   Task,
@@ -116,6 +121,51 @@ import { MarkdownMessage } from "./MarkdownMessage";
 const NO_FOCUS_AREA = "__none";
 const NEXT_ACTION_CONTEXT_RESULT_LIMIT = 5;
 const NEXT_ACTION_CONTEXT_OUTPUT_LIMIT = 2_500;
+const TASK_INSPECTOR_WIDTH_STORAGE_KEY = "draftmora.taskDetail.inspectorWidth";
+const TASK_INSPECTOR_DEFAULT_WIDTH = 480;
+const TASK_INSPECTOR_MIN_WIDTH = 320;
+const TASK_INSPECTOR_MAX_WIDTH = 720;
+const TASK_CONVERSATION_MIN_WIDTH = 420;
+const TASK_INSPECTOR_RESIZE_HANDLE_WIDTH = 12;
+
+function readStoredInspectorWidth() {
+  if (typeof window === "undefined") {
+    return TASK_INSPECTOR_DEFAULT_WIDTH;
+  }
+  try {
+    const storedValue = window.localStorage.getItem(TASK_INSPECTOR_WIDTH_STORAGE_KEY);
+    if (!storedValue) {
+      return TASK_INSPECTOR_DEFAULT_WIDTH;
+    }
+    const value = Number(storedValue);
+    return clampInspectorWidth(Number.isFinite(value) ? value : TASK_INSPECTOR_DEFAULT_WIDTH);
+  } catch {
+    return TASK_INSPECTOR_DEFAULT_WIDTH;
+  }
+}
+
+function storeInspectorWidth(width: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(TASK_INSPECTOR_WIDTH_STORAGE_KEY, String(Math.round(width)));
+  } catch {
+    // Width persistence is optional; resizing still works when storage is unavailable.
+  }
+}
+
+function clampInspectorWidth(width: number, totalWorkspaceWidth?: number) {
+  const viewportMax =
+    totalWorkspaceWidth && totalWorkspaceWidth > 0
+      ? totalWorkspaceWidth - TASK_CONVERSATION_MIN_WIDTH - TASK_INSPECTOR_RESIZE_HANDLE_WIDTH
+      : TASK_INSPECTOR_MAX_WIDTH;
+  const maxWidth = Math.max(
+    TASK_INSPECTOR_MIN_WIDTH,
+    Math.min(TASK_INSPECTOR_MAX_WIDTH, viewportMax),
+  );
+  return Math.min(Math.max(Math.round(width), TASK_INSPECTOR_MIN_WIDTH), maxWidth);
+}
 
 type PendingFollowUp = {
   id: string;
@@ -365,6 +415,10 @@ function TaskDetailWorkspace(props: {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => Boolean(props.task.execution));
+  const [inspectorWidth, setInspectorWidth] = useState(readStoredInspectorWidth);
+  const [resizingInspector, setResizingInspector] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const latestExecution = props.task.execution;
   const running = isTaskExecutionActive(latestExecution);
   const nextAction = useMemo(
@@ -385,6 +439,106 @@ function TaskDetailWorkspace(props: {
     setDeleteError(null);
     setInspectorCollapsed(Boolean(props.task.execution));
   }, [props.task.id]);
+
+  useEffect(() => {
+    storeInspectorWidth(inspectorWidth);
+  }, [inspectorWidth]);
+
+  useEffect(
+    () => () => {
+      resizeCleanupRef.current?.();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (inspectorCollapsed) {
+      return;
+    }
+
+    function clampToWorkspace() {
+      const totalWidth = workspaceRef.current?.getBoundingClientRect().width;
+      setInspectorWidth((current) => clampInspectorWidth(current, totalWidth));
+    }
+
+    clampToWorkspace();
+    window.addEventListener("resize", clampToWorkspace);
+    return () => window.removeEventListener("resize", clampToWorkspace);
+  }, [inspectorCollapsed]);
+
+  function workspaceWidth() {
+    return workspaceRef.current?.getBoundingClientRect().width;
+  }
+
+  function resizeInspectorToPointer(clientX: number) {
+    const rect = workspaceRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    const nextWidth = rect.right - clientX - TASK_INSPECTOR_RESIZE_HANDLE_WIDTH / 2;
+    setInspectorWidth(clampInspectorWidth(nextWidth, rect.width));
+  }
+
+  function resizeInspectorBy(delta: number) {
+    setInspectorWidth((current) => clampInspectorWidth(current + delta, workspaceWidth()));
+  }
+
+  function resizeInspectorTo(width: number) {
+    setInspectorWidth(clampInspectorWidth(width, workspaceWidth()));
+  }
+
+  function beginInspectorResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    resizeCleanupRef.current?.();
+    resizeInspectorToPointer(event.clientX);
+    setResizingInspector(true);
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function stopResize() {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setResizingInspector(false);
+      resizeCleanupRef.current = null;
+    }
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      moveEvent.preventDefault();
+      resizeInspectorToPointer(moveEvent.clientX);
+    }
+
+    resizeCleanupRef.current = stopResize;
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+  }
+
+  function handleInspectorResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 64 : 24;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      resizeInspectorBy(step);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      resizeInspectorBy(-step);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      resizeInspectorTo(TASK_INSPECTOR_MIN_WIDTH);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      resizeInspectorTo(TASK_INSPECTOR_MAX_WIDTH);
+    }
+  }
 
   async function confirmDelete() {
     if (!props.onDelete) {
@@ -587,11 +741,20 @@ function TaskDetailWorkspace(props: {
         </SheetHeader>
 
         <div
+          ref={workspaceRef}
+          data-slot="task-detail-workspace"
+          data-inspector-state={inspectorCollapsed ? "collapsed" : "expanded"}
+          style={
+            {
+              "--task-inspector-width": `${Math.round(inspectorWidth)}px`,
+            } as CSSProperties
+          }
           className={cn(
             "grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-rows-1",
             inspectorCollapsed
               ? "lg:grid-cols-[minmax(0,1fr)_3.5rem]"
-              : "lg:grid-cols-[minmax(0,1fr)_24rem]",
+              : "lg:grid-cols-[minmax(0,1fr)_0.75rem_minmax(20rem,var(--task-inspector-width))]",
+            resizingInspector && "cursor-col-resize",
           )}
         >
           <TaskConversation
@@ -610,6 +773,14 @@ function TaskDetailWorkspace(props: {
             onRunNextAction={nextAction && props.onAskFollowUp ? () => void runNextActionAsFollowUp() : undefined}
             onCreateDraft={nextAction && props.onCreateDraft ? () => void createDraftFromNextAction() : undefined}
           />
+          {!inspectorCollapsed && (
+            <TaskInspectorResizeHandle
+              width={inspectorWidth}
+              resizing={resizingInspector}
+              onPointerDown={beginInspectorResize}
+              onKeyDown={handleInspectorResizeKeyDown}
+            />
+          )}
           <TaskInspector
             task={props.task}
             taskTitle={props.taskTitle}
@@ -653,6 +824,40 @@ function TaskDetailWorkspace(props: {
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function TaskInspectorResizeHandle(props: {
+  width: number;
+  resizing: boolean;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-label="Resize task details"
+      aria-orientation="vertical"
+      aria-valuemin={TASK_INSPECTOR_MIN_WIDTH}
+      aria-valuemax={TASK_INSPECTOR_MAX_WIDTH}
+      aria-valuenow={Math.round(props.width)}
+      tabIndex={0}
+      className={cn(
+        "group hidden min-h-0 touch-none items-center justify-center bg-border/40 outline-none transition-colors lg:flex",
+        "cursor-col-resize hover:bg-border focus-visible:bg-border focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0",
+        props.resizing && "bg-border",
+      )}
+      onPointerDown={props.onPointerDown}
+      onKeyDown={props.onKeyDown}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "h-10 w-1 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-muted-foreground/70",
+          props.resizing && "bg-muted-foreground/80",
+        )}
+      />
+    </div>
   );
 }
 

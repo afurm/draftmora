@@ -12,6 +12,11 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  try {
+    window.localStorage.clear();
+  } catch {
+    // Storage can be unavailable in some jsdom origins.
+  }
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -259,6 +264,40 @@ describe("TaskModal", () => {
 
     expect(getInspectorState()).toBe("collapsed");
     expect(document.body.textContent).not.toContain("Details locked");
+  });
+
+  it("lets the expanded inspector be resized with a pointer", async () => {
+    await renderTaskModal(task());
+
+    const workspace = document.body.querySelector<HTMLElement>(
+      '[data-slot="task-detail-workspace"]',
+    );
+    expect(workspace).toBeTruthy();
+    vi.spyOn(workspace!, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 1200,
+      height: 800,
+      top: 0,
+      right: 1200,
+      bottom: 800,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    const handle = getResizeHandle();
+    expect(handle.getAttribute("aria-valuenow")).toBe("480");
+
+    await act(async () => {
+      handle.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 820 }),
+      );
+      window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 700 }));
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    });
+
+    expect(handle.getAttribute("aria-valuenow")).toBe("494");
+    expect(workspace?.style.getPropertyValue("--task-inspector-width")).toBe("494px");
   });
 
   it("keeps previous results visible while a follow-up is running", async () => {
@@ -534,6 +573,14 @@ function getInspectorState() {
   return document.body
     .querySelector('aside[aria-label="Task details"]')
     ?.getAttribute("data-state");
+}
+
+function getResizeHandle() {
+  const handle = document.body.querySelector<HTMLElement>(
+    '[role="separator"][aria-label="Resize task details"]',
+  );
+  expect(handle).toBeTruthy();
+  return handle as HTMLElement;
 }
 
 function task(): Task {

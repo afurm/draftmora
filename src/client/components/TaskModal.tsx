@@ -788,8 +788,8 @@ function TaskDetailWorkspace(props: {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 items-center justify-between gap-3 text-sm sm:flex-1">
                   <span className="shrink-0 text-muted-foreground">Current step</span>
-                  <span className="min-w-0 text-right font-medium">
-                    {formatExecutionMessage(latestExecution.progressSummary)}
+                  <span className="line-clamp-2 min-w-0 break-words text-right font-medium leading-snug">
+                    {formatCurrentStepMessage(latestExecution.progressSummary)}
                   </span>
                 </div>
                 {props.onAbortExecution && (
@@ -1575,9 +1575,9 @@ function TaskInspector(props: {
       <Tabs
         value={activeTab}
         onValueChange={(value) => setActiveTab(value as InspectorTab)}
-        className="h-full gap-0"
+        className="h-[42dvh] min-h-0 gap-0 overflow-hidden lg:h-full"
       >
-        <div className="flex items-center gap-2 border-b p-3">
+        <div className="flex shrink-0 items-center gap-2 border-b p-3">
           <TabsList className="grid min-w-0 flex-1 grid-cols-4">
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
@@ -1595,7 +1595,7 @@ function TaskInspector(props: {
             <PanelRightClose data-icon="icon" />
           </Button>
         </div>
-        <ScrollArea className="h-[42dvh] lg:h-full">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="p-4">
             <TabsContent value="details">
               <div className="flex flex-col gap-5">
@@ -1746,7 +1746,7 @@ function TaskRunsPanel(props: { task: Task }) {
   }
 
   return (
-    <ItemGroup>
+    <ItemGroup className="min-h-0 pb-3">
       {executions.map((execution, index) => (
         <Item variant="outline" className="items-start" key={execution.id}>
           <ItemMedia variant="icon">{executionStatusIcon(execution)}</ItemMedia>
@@ -2216,8 +2216,9 @@ function ExecutionOutput(props: {
   onExpandedChange: (expanded: boolean) => void;
 }) {
   const lineCount = executionTerminalLines(props.execution).length;
+  const needsIndependentScroll = lineCount > 8;
   return (
-    <section className="flex flex-col gap-2">
+    <section className="flex min-h-0 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-sm font-medium">Technical details</h3>
@@ -2234,8 +2235,14 @@ function ExecutionOutput(props: {
         </Button>
       </div>
       {props.expanded && (
-        <ScrollArea className="max-h-48 max-w-full overflow-hidden rounded-lg border bg-muted">
-          <pre className="min-h-24 max-w-full whitespace-pre-wrap break-all p-3 font-mono text-xs leading-relaxed text-muted-foreground">
+        <ScrollArea
+          aria-label={`Run log for ${formatExecutionStatus(props.execution).toLowerCase()} task run`}
+          className={cn(
+            "max-w-full overflow-hidden rounded-lg border bg-muted",
+            needsIndependentScroll ? "h-56 max-h-[45dvh]" : "max-h-56 min-h-24",
+          )}
+        >
+          <pre className="min-h-24 max-w-full whitespace-pre-wrap break-all p-3 pb-8 font-mono text-xs leading-relaxed text-muted-foreground">
             {executionTerminalLines(props.execution).join("\n")}
           </pre>
         </ScrollArea>
@@ -2360,6 +2367,150 @@ function formatDuration(startedAt: string | null) {
     return `${remainingSeconds}s`;
   }
   return `${minutes}m ${remainingSeconds}s`;
+}
+
+function formatCurrentStepMessage(message: string) {
+  const normalized = formatExecutionMessage(message).trim();
+  const toolSummary = summarizeToolProgressForCurrentStep(normalized);
+  if (toolSummary) {
+    return toolSummary;
+  }
+  if (/waiting for assistant output/i.test(normalized)) {
+    return "Waiting for the assistant";
+  }
+  if (looksLikeTechnicalProgress(normalized)) {
+    return "Waiting for the assistant";
+  }
+  return normalized || "Waiting for the assistant";
+}
+
+function summarizeToolProgressForCurrentStep(message: string) {
+  const match = message.match(
+    /^(?:progress:\s*)?(run_shell|read_file|write_file|list_files)(?:\s+\(([\s\S]+)\))?\s+(completed|failed)(?:\s+in\s+\d+ms)?/i,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const toolName = match[1]?.toLowerCase();
+  const target = match[2]?.trim() ?? "";
+  const status = match[3]?.toLowerCase();
+  const failed = status === "failed";
+
+  if (toolName === "run_shell") {
+    return failed ? "Command needs attention" : summarizeShellCommand(target);
+  }
+  if (toolName === "read_file") {
+    return failed ? `Could not read ${formatToolTarget(target)}` : `Reading ${formatToolTarget(target)}`;
+  }
+  if (toolName === "write_file") {
+    return failed ? `Could not update ${formatToolTarget(target)}` : `Updating ${formatToolTarget(target)}`;
+  }
+  if (toolName === "list_files") {
+    return failed ? "Could not list files" : "Browsing files";
+  }
+
+  return null;
+}
+
+function summarizeShellCommand(command: string) {
+  const normalized = command.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "Running command";
+  }
+  if (/^gh\s+search\s+issues\b/i.test(normalized)) {
+    return "Searching GitHub issues";
+  }
+  if (/^gh\s+search\s+prs?\b/i.test(normalized)) {
+    return "Searching GitHub pull requests";
+  }
+  if (/^gh\s+issue\s+view\b/i.test(normalized)) {
+    return "Reading GitHub issue";
+  }
+  if (/^gh\s+pr\s+view\b/i.test(normalized)) {
+    return "Reading pull request";
+  }
+  if (/^gh\b/i.test(normalized)) {
+    return "Checking GitHub";
+  }
+  if (isTestCommand(normalized)) {
+    return "Running tests";
+  }
+  if (isTypecheckCommand(normalized)) {
+    return "Checking types";
+  }
+  if (isBuildCommand(normalized)) {
+    return "Building project";
+  }
+  if (isLintCommand(normalized)) {
+    return "Checking code style";
+  }
+  if (isInstallCommand(normalized)) {
+    return "Installing dependencies";
+  }
+  if (/^(?:rg|grep|ag|find)\b/i.test(normalized)) {
+    return "Searching files";
+  }
+  if (/^(?:sed|cat|head|tail|nl)\b/i.test(normalized)) {
+    return "Reading files";
+  }
+  if (/^(?:ls|tree)\b/i.test(normalized)) {
+    return "Listing files";
+  }
+  if (/^git\s+status\b/i.test(normalized)) {
+    return "Checking git status";
+  }
+  if (/^git\s+(?:diff|show|log)\b/i.test(normalized)) {
+    return "Reviewing git history";
+  }
+  if (/^git\b/i.test(normalized)) {
+    return "Updating git state";
+  }
+  return "Running command";
+}
+
+function isTestCommand(command: string) {
+  return /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|vitest|jest|playwright|cypress)\b/i.test(
+    command,
+  ) || /^(?:npx\s+)?(?:vitest|jest|playwright|cypress|pytest)\b/i.test(command);
+}
+
+function isTypecheckCommand(command: string) {
+  return /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:typecheck|check-types)\b/i.test(command) ||
+    /^(?:npx\s+)?tsc\b/i.test(command);
+}
+
+function isBuildCommand(command: string) {
+  return /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build\b/i.test(command) ||
+    /^(?:npx\s+)?(?:vite|next|tsup|rollup|webpack)\s+build\b/i.test(command);
+}
+
+function isLintCommand(command: string) {
+  return /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|format:check|format|check)\b/i.test(
+    command,
+  ) || /^(?:npx\s+)?(?:eslint|biome|prettier)\b/i.test(command);
+}
+
+function isInstallCommand(command: string) {
+  return /^(?:npm\s+(?:install|ci)|pnpm\s+(?:install|i)|yarn\s+(?:install|add)|bun\s+(?:install|add))\b/i.test(
+    command,
+  );
+}
+
+function formatToolTarget(target: string) {
+  const trimmed = target.trim();
+  if (!trimmed || trimmed === ".") {
+    return "files";
+  }
+  return trimmed.split(/[\\/]/).filter(Boolean).at(-1) ?? trimmed;
+}
+
+function looksLikeTechnicalProgress(message: string) {
+  return (
+    /^(?:progress:\s*)?(?:run_shell|read_file|write_file|list_files)\b/i.test(message) ||
+    /\b(?:completed|failed)\s+in\s+\d+ms\b/i.test(message) ||
+    (message.length > 96 && /\([^)]{32,}\)/.test(message))
+  );
 }
 
 function formatExecutionMessage(message: string) {

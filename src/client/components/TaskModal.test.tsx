@@ -119,6 +119,81 @@ describe("TaskModal", () => {
     );
   });
 
+  it("summarizes raw tool progress in the current step and keeps details in the run log", async () => {
+    const rawProgress =
+      'run_shell (gh search issues repo:afurm/draftmora "task-executor" --state open) completed in 1582ms';
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "running",
+        endedAt: null,
+        progressSummary: rawProgress,
+        events: [
+          {
+            id: "event-1",
+            kind: "running",
+            message: "Work started.",
+            createdAt: "2026-05-03T07:00:10.000Z",
+          },
+          {
+            id: "event-2",
+            kind: "progress",
+            message: rawProgress,
+            createdAt: "2026-05-03T07:00:20.000Z",
+          },
+        ],
+      }),
+    });
+
+    expect(document.body.textContent).toContain("Searching GitHub issues");
+    expect(document.body.textContent).not.toContain(rawProgress);
+
+    await clickButtonByLabel("Open Runs");
+
+    expect(document.body.textContent).toContain(rawProgress);
+  });
+
+  it("bounds the runs panel and long run logs for independent scrolling", async () => {
+    const longRunEvents = Array.from({ length: 12 }, (_, index) => ({
+      id: `event-${index + 1}`,
+      kind: "progress" as const,
+      message: `run_shell (npm test -- --case ${index + 1}) completed in ${index + 1}ms`,
+      createdAt: `2026-05-03T07:${String(index).padStart(2, "0")}:00.000Z`,
+    }));
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        id: "execution-latest",
+        status: "running",
+        endedAt: null,
+        events: longRunEvents,
+        previousExecutions: [
+          execution({ id: "execution-previous-1", status: "succeeded", output: "First result." }),
+          execution({ id: "execution-previous-2", status: "succeeded", output: "Second result." }),
+          execution({ id: "execution-previous-3", status: "succeeded", output: "Third result." }),
+        ],
+      }),
+    });
+
+    await clickButtonByLabel("Open Runs");
+
+    const tabs = document.body.querySelector<HTMLElement>('[data-slot="tabs"]');
+    expect(tabs?.className).toContain("overflow-hidden");
+    expect(tabs?.className).toContain("min-h-0");
+
+    const runsScrollArea = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="scroll-area"]'),
+    ).find((element) => element.textContent?.includes("Run 4: Running"));
+    expect(runsScrollArea?.className).toContain("min-h-0");
+    expect(runsScrollArea?.className).toContain("flex-1");
+
+    const runLog = document.body.querySelector<HTMLElement>(
+      '[aria-label="Run log for running task run"]',
+    );
+    expect(runLog?.className).toContain("h-56");
+    expect(runLog?.textContent).toContain("run_shell (npm test -- --case 12) completed in 12ms");
+  });
+
   it("lets the user stop active AI work", async () => {
     const onAbortExecution = vi.fn().mockResolvedValue(undefined);
     await renderTaskModal(

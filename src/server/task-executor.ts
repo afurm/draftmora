@@ -151,6 +151,19 @@ export async function forceQueuedTaskFollowUpExecutionForTask(input: {
       execution,
     };
   }
+  const latestQueuedFollowUp = input.store
+    .listTaskExecutions(task.id)
+    .filter((candidate) => candidate.requestKind === "follow_up" && candidate.status === "queued")
+    .at(-1);
+  if (latestQueuedFollowUp?.id !== execution.id) {
+    return {
+      found: true,
+      forced: false,
+      reason: "Only the latest queued follow-up can be forced.",
+      task,
+      execution,
+    };
+  }
 
   cancelAbortableExecutions({
     store: input.store,

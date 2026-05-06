@@ -176,6 +176,55 @@ describe("TaskModal", () => {
     expect(document.body.textContent).toContain("Forced request queued.");
   });
 
+  it("offers force request only on the latest queued follow-up", async () => {
+    const onForceFollowUp = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          id: "execution-follow-up-newer",
+          status: "queued",
+          endedAt: null,
+          requestKind: "follow_up",
+          requestPrompt: "Use the newer correction.",
+          progressSummary: "Follow-up queued.",
+          createdAt: "2026-05-03T07:00:30.000Z",
+          previousExecutions: [
+            execution({
+              id: "execution-active",
+              status: "running",
+              endedAt: null,
+              progressSummary: "Preparing the task context.",
+              createdAt: "2026-05-03T07:00:00.000Z",
+            }),
+            execution({
+              id: "execution-follow-up-older",
+              status: "queued",
+              endedAt: null,
+              requestKind: "follow_up",
+              requestPrompt: "Use the older correction.",
+              progressSummary: "Follow-up queued.",
+              createdAt: "2026-05-03T07:00:20.000Z",
+            }),
+          ],
+        }),
+      },
+      { onForceFollowUp },
+    );
+
+    expect(document.body.textContent).toContain("Use the older correction.");
+    expect(document.body.textContent).toContain("Use the newer correction.");
+    const forceButtons = Array.from(document.body.querySelectorAll("button")).filter(
+      (button) => button.textContent === "Force request",
+    );
+    expect(forceButtons).toHaveLength(1);
+
+    await clickButton("Force request");
+    await flushReactPromises();
+
+    expect(onForceFollowUp).toHaveBeenCalledWith("execution-follow-up-newer");
+  });
+
   it("keeps queued follow-ups forceable when force fails", async () => {
     const onForceFollowUp = vi
       .fn()

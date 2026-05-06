@@ -1865,6 +1865,9 @@ function buildTaskThreadMessages(
   }
 
   const executions = getTaskExecutionHistory(task);
+  const latestQueuedFollowUpExecution = [...executions]
+    .reverse()
+    .find((execution) => execution.requestKind === "follow_up" && execution.status === "queued");
   executions.forEach((execution, index) => {
     const isLatestExecution = execution === task.execution;
     const hasOtherActiveExecution = executions.some(
@@ -1885,6 +1888,7 @@ function buildTaskThreadMessages(
         canForce:
           execution.requestKind === "follow_up" &&
           execution.status === "queued" &&
+          execution.id === latestQueuedFollowUpExecution?.id &&
           hasOtherActiveExecution,
       });
     }

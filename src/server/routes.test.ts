@@ -806,6 +806,76 @@ describe("routes", () => {
     store.close();
   });
 
+  it("rejects forcing an older queued follow-up when a newer follow-up is queued", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "routes-force-stale-follow-up-"));
+    tempDirs.push(dir);
+    const store = new BoardStore(path.join(dir, "board.db"));
+    const providerRouter = new BlockingTaskProviderRouter(store);
+    const app = buildServer({
+      store,
+      providerRouter,
+      memoryRoot: dir,
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Choose the latest correction",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task as Task;
+    await waitUntil(() => providerRouter.toolRequests.length === 1);
+
+    const firstQueued = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up`,
+      payload: { prompt: "Older correction." },
+    });
+    expect(firstQueued.statusCode).toBe(201);
+    const firstQueuedExecutionId = firstQueued.json().task.execution.id;
+
+    const secondQueued = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up`,
+      payload: { prompt: "Newer correction." },
+    });
+    expect(secondQueued.statusCode).toBe(201);
+    const secondQueuedExecutionId = secondQueued.json().task.execution.id;
+    expect(secondQueuedExecutionId).not.toBe(firstQueuedExecutionId);
+
+    const forced = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up/${firstQueuedExecutionId}/force`,
+    });
+
+    expect(forced.statusCode).toBe(409);
+    expect(forced.json().error).toBe("Only the latest queued follow-up can be forced.");
+    expect(providerRouter.toolRequests).toHaveLength(1);
+    expect(providerRouter.toolRequestSignals[0]?.aborted).toBe(false);
+
+    const detailed = await app.inject({
+      method: "GET",
+      url: `/api/tasks/${task.id}`,
+    });
+    expect(detailed.json().task.execution.id).toBe(secondQueuedExecutionId);
+    expect(detailed.json().task.execution.requestPrompt).toBe("Newer correction.");
+    expect(detailed.json().task.execution.status).toBe("queued");
+    expect(store.getTaskExecution(firstQueuedExecutionId)?.status).toBe("queued");
+
+    const abort = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/abort`,
+    });
+    expect(abort.statusCode).toBe(200);
+    providerRouter.resolveNextToolRequest("Late result after stale force rejection.");
+    await flushQueuedPromises();
+
+    await app.close();
+    store.close();
+  });
+
   it("skips queued follow-up work when the task is deleted before it starts", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "routes-queue-delete-"));
     tempDirs.push(dir);

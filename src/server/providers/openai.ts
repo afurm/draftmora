@@ -73,7 +73,7 @@ function buildOpenAiOptions(
   const options: ProviderStreamOptions = {
     apiKey: auth.apiKey,
   };
-  const maxTokens = auth.maxTokens ?? requestMaxTokens;
+  const maxTokens = requestMaxTokens ?? auth.maxTokens;
   if (maxTokens !== undefined) {
     options.maxTokens = maxTokens;
   }

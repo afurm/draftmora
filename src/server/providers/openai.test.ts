@@ -165,10 +165,7 @@ describe("openAiProvider", () => {
     });
 
     await openAiProvider.complete(
-      {
-        ...makeRequest([{ role: "user", content: "ship it" }]),
-        maxTokens: 1200,
-      },
+      makeRequest([{ role: "user", content: "ship it" }]),
       {
         ...auth,
         authMode: "api_key",
@@ -205,6 +202,29 @@ describe("openAiProvider", () => {
         "OpenAI-Organization": "org_test",
         "OpenAI-Project": "proj_test",
       },
+    });
+  });
+
+  it("preserves request token caps over saved provider defaults", async () => {
+    let capturedOptions: unknown;
+    mocks.complete.mockImplementation(async (_model, _context, options) => {
+      capturedOptions = options;
+      return assistantMessage();
+    });
+
+    await openAiProvider.complete(
+      {
+        ...makeRequest([{ role: "user", content: "keep this bounded" }]),
+        maxTokens: 1200,
+      },
+      {
+        ...auth,
+        maxTokens: 4000,
+      },
+    );
+
+    expect(capturedOptions).toMatchObject({
+      maxTokens: 1200,
     });
   });
 

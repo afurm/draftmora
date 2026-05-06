@@ -59,6 +59,9 @@ export function Sidebar(props: {
 
   function selectWorkspaceMode(mode: WorkspaceMode) {
     props.onWorkspaceModeChange(mode);
+    if (mode === "board") {
+      props.onViewChange("board");
+    }
     if (isMobile) {
       setOpenMobile(false);
     }
@@ -77,6 +80,9 @@ export function Sidebar(props: {
       setOpenMobile(false);
     }
   }
+
+  const activeWorkspaceMode =
+    props.workspaceMode === "chat" ? "chat" : props.activeView === "board" ? "board" : "";
 
   return (
     <ShadcnSidebar collapsible="icon" variant="inset">
@@ -106,7 +112,7 @@ export function Sidebar(props: {
         </SidebarMenu>
         <ToggleGroup
           type="single"
-          value={props.workspaceMode}
+          value={activeWorkspaceMode}
           onValueChange={(value) => {
             if (value) {
               selectWorkspaceMode(value as WorkspaceMode);

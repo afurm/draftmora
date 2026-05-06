@@ -370,6 +370,13 @@ export function App() {
     setWorkspaceMode("board");
   }
 
+  function changeWorkspaceMode(nextMode: WorkspaceMode) {
+    setWorkspaceMode(nextMode);
+    if (nextMode === "board") {
+      setView("board");
+    }
+  }
+
   const readyNowCount = counts.ready + counts.in_progress;
   const attentionCount = counts.needs_attention;
   const activeView = VIEW_META[view];
@@ -412,7 +419,7 @@ export function App() {
           activeConversationId={activeConversationId}
           chatHistoryLoading={workspaceMode === "chat" && chatHistoryLoading}
           onViewChange={changeView}
-          onWorkspaceModeChange={setWorkspaceMode}
+          onWorkspaceModeChange={changeWorkspaceMode}
           onChatConversationSelect={selectChatConversation}
           onNewChatConversation={() => void createChatConversation()}
         />

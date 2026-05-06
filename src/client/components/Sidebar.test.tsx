@@ -40,6 +40,7 @@ afterEach(() => {
 
 describe("Sidebar", () => {
   it("keeps the sidebar mode switch without a duplicate workspace board link", async () => {
+    const onViewChange = vi.fn();
     const onWorkspaceModeChange = vi.fn();
     const onChatConversationSelect = vi.fn();
 
@@ -55,7 +56,7 @@ describe("Sidebar", () => {
               chatConversations={chatConversations()}
               activeConversationId="conversation-1"
               chatHistoryLoading={false}
-              onViewChange={vi.fn()}
+              onViewChange={onViewChange}
               onWorkspaceModeChange={onWorkspaceModeChange}
               onChatConversationSelect={onChatConversationSelect}
               onNewChatConversation={vi.fn()}
@@ -89,6 +90,7 @@ describe("Sidebar", () => {
     });
 
     expect(onWorkspaceModeChange).toHaveBeenCalledWith("board");
+    expect(onViewChange).toHaveBeenCalledWith("board");
 
     await act(async () => {
       Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'))
@@ -97,6 +99,46 @@ describe("Sidebar", () => {
     });
 
     expect(onChatConversationSelect).toHaveBeenCalledWith("conversation-2");
+  });
+
+  it("lets the Board toggle leave settings instead of staying selected there", async () => {
+    const onViewChange = vi.fn();
+    const onWorkspaceModeChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <SidebarProvider>
+            <Sidebar
+              activeView="settings"
+              workspaceMode="board"
+              counts={counts()}
+              focusAreas={focusAreas()}
+              chatConversations={chatConversations()}
+              activeConversationId="conversation-1"
+              chatHistoryLoading={false}
+              onViewChange={onViewChange}
+              onWorkspaceModeChange={onWorkspaceModeChange}
+              onChatConversationSelect={vi.fn()}
+              onNewChatConversation={vi.fn()}
+            />
+          </SidebarProvider>
+        </TooltipProvider>,
+      );
+    });
+
+    const boardToggle = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Show board"]',
+    );
+
+    expect(boardToggle?.getAttribute("data-state")).toBe("off");
+
+    await act(async () => {
+      boardToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onWorkspaceModeChange).toHaveBeenCalledWith("board");
+    expect(onViewChange).toHaveBeenCalledWith("board");
   });
 });
 

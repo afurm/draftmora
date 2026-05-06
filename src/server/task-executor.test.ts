@@ -4,6 +4,7 @@ import { resolveArtifactFilePath, resolveArtifactRevealCommand } from "./artifac
 import {
   extractLocalToolResultArtifacts,
   extractTaskExecutionArtifacts,
+  mergeTaskExecutionArtifacts,
 } from "./task-artifacts";
 import { buildBoardTaskContext, buildTaskSystemPrompt } from "./task-executor";
 
@@ -118,6 +119,40 @@ describe("task execution artifacts", () => {
       }),
     ]);
   });
+
+  it("keeps URL casing distinct when deduping artifacts", () => {
+    const artifacts = mergeTaskExecutionArtifacts([
+      {
+        id: "",
+        type: "link",
+        title: "Upper report",
+        content: "example.test/Report",
+        url: "https://example.test/Report",
+        createdAt: "",
+      },
+      {
+        id: "",
+        type: "link",
+        title: "Lower report",
+        content: "example.test/report",
+        url: "https://example.test/report",
+        createdAt: "",
+      },
+      {
+        id: "",
+        type: "link",
+        title: "Duplicate lower report",
+        content: "example.test/report",
+        url: "https://example.test/report",
+        createdAt: "",
+      },
+    ]);
+
+    expect(artifacts.map((artifact) => artifact.url)).toEqual([
+      "https://example.test/Report",
+      "https://example.test/report",
+    ]);
+  });
 });
 
 describe("artifact file opener", () => {
@@ -140,6 +175,10 @@ describe("artifact file opener", () => {
     expect(resolveArtifactRevealCommand("/tmp/report.md", "linux")).toEqual({
       command: "xdg-open",
       args: ["/tmp"],
+    });
+    expect(resolveArtifactRevealCommand("/tmp/results", "linux", true)).toEqual({
+      command: "xdg-open",
+      args: ["/tmp/results"],
     });
   });
 });

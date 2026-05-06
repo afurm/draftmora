@@ -130,7 +130,7 @@ function createArtifactAdder(artifacts: TaskExecutionArtifact[]) {
 }
 
 function artifactKey(artifact: Omit<TaskExecutionArtifact, "id" | "createdAt">) {
-  return artifact.url?.toLowerCase() ?? `${artifact.type}:${artifact.title}:${artifact.content}`;
+  return artifact.url ?? `${artifact.type}:${artifact.title}:${artifact.content}`;
 }
 
 function normalizeUrl(value: string | undefined) {

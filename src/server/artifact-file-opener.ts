@@ -29,6 +29,7 @@ export function resolveArtifactFilePath(artifact: TaskExecutionArtifact): string
 export function resolveArtifactRevealCommand(
   filePath: string,
   platform: NodeJS.Platform = process.platform,
+  isDirectory = false,
 ): ArtifactOpenCommand {
   if (platform === "darwin") {
     return { command: "open", args: ["-R", filePath] };
@@ -36,7 +37,7 @@ export function resolveArtifactRevealCommand(
   if (platform === "win32") {
     return { command: "explorer.exe", args: [`/select,${filePath}`] };
   }
-  return { command: "xdg-open", args: [path.dirname(filePath)] };
+  return { command: "xdg-open", args: [isDirectory ? filePath : path.dirname(filePath)] };
 }
 
 export async function revealArtifactFile(filePath: string): Promise<ArtifactFileOpenResult> {
@@ -46,7 +47,9 @@ export async function revealArtifactFile(filePath: string): Promise<ArtifactFile
       return { ok: false, path: filePath, error: "artifact path is not a file or folder" };
     }
     await access(filePath);
-    await execArtifactOpenCommand(resolveArtifactRevealCommand(filePath));
+    await execArtifactOpenCommand(
+      resolveArtifactRevealCommand(filePath, process.platform, fileStat.isDirectory()),
+    );
     return { ok: true, path: filePath };
   } catch {
     return { ok: false, path: filePath, error: "failed to reveal artifact file" };

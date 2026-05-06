@@ -62,6 +62,15 @@ function assistantMessage(content = "Scoped follow-up answer.") {
   };
 }
 
+function assistantErrorMessage(errorMessage: string) {
+  return {
+    ...assistantMessage(""),
+    content: [],
+    stopReason: "error",
+    errorMessage,
+  };
+}
+
 function assistantMessageWithToolCall() {
   return {
     ...assistantMessage(""),
@@ -155,6 +164,40 @@ describe("openAiProvider", () => {
     expect(mocks.complete).toHaveBeenCalledTimes(2);
     expect(mocks.complete.mock.calls[0][2]).toMatchObject({ transport: "auto" });
     expect(mocks.complete.mock.calls[1][2]).toMatchObject({ transport: "sse" });
+  });
+
+  it("retries transient Codex assistant error payloads", async () => {
+    mocks.complete
+      .mockResolvedValueOnce(
+        assistantErrorMessage(
+          'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."},"sequence_number":2}',
+        ),
+      )
+      .mockResolvedValueOnce(assistantMessage("Recovered after overload retry."));
+
+    const response = await openAiProvider.complete(
+      makeRequest([{ role: "user", content: "continue the task" }]),
+      { ...auth, maxRetries: 2, maxRetryDelayMs: 0 },
+    );
+
+    expect(response.content).toBe("Recovered after overload retry.");
+    expect(mocks.complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry non-transient assistant error payloads", async () => {
+    mocks.complete.mockResolvedValue(
+      assistantErrorMessage(
+        'Codex error: {"type":"error","error":{"type":"invalid_request_error","message":"Request size exceeds model context window"}}',
+      ),
+    );
+
+    await expect(
+      openAiProvider.complete(
+        makeRequest([{ role: "user", content: "continue the task" }]),
+        { ...auth, maxRetries: 2, maxRetryDelayMs: 0 },
+      ),
+    ).rejects.toThrow("Request size exceeds model context window");
+    expect(mocks.complete).toHaveBeenCalledTimes(1);
   });
 
   it("passes saved OpenAI request configuration to the SDK", async () => {

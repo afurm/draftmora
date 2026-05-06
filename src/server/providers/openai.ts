@@ -12,6 +12,10 @@ import {
 import type { AiProvider, ChatMessage, CompletionRequest, ProviderAuth } from "./types";
 import { redactedError, redactSensitiveErrorMessage } from "../redaction";
 
+const DEFAULT_TRANSIENT_ERROR_RETRIES = 2;
+const DEFAULT_TRANSIENT_RETRY_DELAY_MS = 1_000;
+const MAX_TRANSIENT_RETRY_DELAY_MS = 30_000;
+
 export const openAiProvider: AiProvider = {
   async complete(request, auth) {
     const model = resolveOpenAiModel(auth, request.model);
@@ -47,6 +51,38 @@ async function completeOpenAi(
   maxTokens?: number,
 ): Promise<AssistantMessage> {
   const options = buildOpenAiOptions(auth, maxTokens);
+  const retryCount = resolveTransientRetryCount(auth);
+  let lastRetryableError: Error | undefined;
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    try {
+      const message = await completeOpenAiOnce(model, context, auth, options);
+      if (!isRetryableOpenAiError(message)) {
+        return message;
+      }
+      lastRetryableError = new Error(
+        redactSensitiveErrorMessage(message.errorMessage || "OpenAI request failed."),
+      );
+    } catch (err) {
+      const error = redactedError(err);
+      if (!isRetryableOpenAiError(error)) {
+        throw error;
+      }
+      lastRetryableError = error;
+    }
+    if (attempt >= retryCount) {
+      break;
+    }
+    await waitBeforeTransientRetry(attempt, auth);
+  }
+  throw lastRetryableError ?? new Error("OpenAI request failed.");
+}
+
+async function completeOpenAiOnce(
+  model: Model<Api>,
+  context: Context,
+  auth: ProviderAuth,
+  options: ProviderStreamOptions,
+): Promise<AssistantMessage> {
   try {
     const message = await complete(model, context, options);
     if (shouldRetryCodexOverSse(message, auth, options)) {
@@ -64,6 +100,19 @@ async function completeOpenAi(
     }
     throw error;
   }
+}
+
+function resolveTransientRetryCount(auth: ProviderAuth) {
+  return Math.max(0, auth.maxRetries ?? DEFAULT_TRANSIENT_ERROR_RETRIES);
+}
+
+async function waitBeforeTransientRetry(attempt: number, auth: ProviderAuth): Promise<void> {
+  const maxDelayMs = auth.maxRetryDelayMs ?? MAX_TRANSIENT_RETRY_DELAY_MS;
+  const delayMs = Math.min(DEFAULT_TRANSIENT_RETRY_DELAY_MS * 2 ** attempt, maxDelayMs);
+  if (delayMs <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function buildOpenAiOptions(
@@ -121,6 +170,36 @@ function shouldRetryCodexOverSse(
     auth.authMode === "oauth" &&
     options.transport !== "sse" &&
     isWebSocketCloseError(result)
+  );
+}
+
+function isRetryableOpenAiError(result: AssistantMessage | Error) {
+  const message =
+    result instanceof Error
+      ? result.message
+      : result.stopReason === "error" || result.stopReason === "aborted"
+        ? result.errorMessage
+        : undefined;
+  if (!message) {
+    return false;
+  }
+  const normalized = message.toLowerCase();
+  if (
+    /\b(authentication_error|invalid_request_error|permission_denied|insufficient_quota)\b/.test(
+      normalized,
+    ) ||
+    /\b(billing|context window|invalid api key|unsupported)\b/.test(normalized)
+  ) {
+    return false;
+  }
+  return (
+    /\b(service_unavailable_error|server_is_overloaded|overloaded_error|server_error|rate_limit_error)\b/.test(
+      normalized,
+    ) ||
+    /\b(temporarily overloaded|currently overloaded|try again later|gateway timeout|service unavailable|websocket closed)\b/.test(
+      normalized,
+    ) ||
+    /\b(429|500|502|503|504|529)\b/.test(normalized)
   );
 }
 

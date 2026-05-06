@@ -93,6 +93,8 @@ describe("BoardStore", () => {
       provider: "openai",
       status: "succeeded",
       output: "Second result.",
+      requestKind: "follow_up",
+      requestPrompt: "Add deployment notes.",
     });
 
     const listed = store.listTasks().find((entry) => entry.id === task.id);
@@ -101,8 +103,12 @@ describe("BoardStore", () => {
 
     const detailed = store.getTask(task.id);
     expect(detailed?.execution?.output).toBe("Second result.");
+    expect(detailed?.execution?.requestKind).toBe("follow_up");
+    expect(detailed?.execution?.requestPrompt).toBe("Add deployment notes.");
     expect(detailed?.execution?.previousExecutions).toHaveLength(1);
     expect(detailed?.execution?.previousExecutions?.[0]?.output).toBe("First result.");
+    expect(detailed?.execution?.previousExecutions?.[0]?.requestKind).toBe("initial");
+    expect(detailed?.execution?.previousExecutions?.[0]?.requestPrompt).toBe("");
     store.close();
   });
 

@@ -73,6 +73,8 @@ function task(input: {
           status: "succeeded",
           provider: "openai",
           model: "gpt-5.5",
+          requestKind: "initial",
+          requestPrompt: input.title,
           startedAt: null,
           endedAt: null,
           progressSummary: "Work completed.",

@@ -1,17 +1,32 @@
 import {
   AlertTriangle,
+  Bot,
   CheckCircle2,
   Clock3,
   ExternalLink,
   FileText,
+  Info,
   Link2,
   LoaderCircle,
+  LockKeyhole,
   MessageSquareText,
+  MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
+  RotateCcw,
   Send,
   Trash2,
+  UserRound,
+  X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import type {
   FocusArea,
   Priority,
@@ -23,6 +38,17 @@ import type {
 } from "../../shared/types";
 import { COLUMN_LABELS, PRIORITIES, TASK_STATUSES } from "../../shared/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +59,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -46,7 +85,10 @@ import {
   Item,
   ItemActions,
   ItemContent,
+  ItemDescription,
+  ItemFooter,
   ItemGroup,
+  ItemHeader,
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
@@ -61,13 +103,104 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { getFocusAreaStyle } from "../focus-areas";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 const NO_FOCUS_AREA = "__none";
 const NEXT_ACTION_CONTEXT_RESULT_LIMIT = 5;
 const NEXT_ACTION_CONTEXT_OUTPUT_LIMIT = 2_500;
+const TASK_INSPECTOR_WIDTH_STORAGE_KEY = "draftmora.taskDetail.inspectorWidth";
+const TASK_INSPECTOR_DEFAULT_WIDTH = 480;
+const TASK_INSPECTOR_MIN_WIDTH = 320;
+const TASK_INSPECTOR_MAX_WIDTH = 720;
+const TASK_CONVERSATION_MIN_WIDTH = 420;
+const TASK_INSPECTOR_RESIZE_HANDLE_WIDTH = 12;
+
+function readStoredInspectorWidth() {
+  if (typeof window === "undefined") {
+    return TASK_INSPECTOR_DEFAULT_WIDTH;
+  }
+  try {
+    const storedValue = window.localStorage.getItem(TASK_INSPECTOR_WIDTH_STORAGE_KEY);
+    if (!storedValue) {
+      return TASK_INSPECTOR_DEFAULT_WIDTH;
+    }
+    const value = Number(storedValue);
+    return clampInspectorWidth(Number.isFinite(value) ? value : TASK_INSPECTOR_DEFAULT_WIDTH);
+  } catch {
+    return TASK_INSPECTOR_DEFAULT_WIDTH;
+  }
+}
+
+function storeInspectorWidth(width: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(TASK_INSPECTOR_WIDTH_STORAGE_KEY, String(Math.round(width)));
+  } catch {
+    // Width persistence is optional; resizing still works when storage is unavailable.
+  }
+}
+
+function clampInspectorWidth(width: number, totalWorkspaceWidth?: number) {
+  const viewportMax =
+    totalWorkspaceWidth && totalWorkspaceWidth > 0
+      ? totalWorkspaceWidth - TASK_CONVERSATION_MIN_WIDTH - TASK_INSPECTOR_RESIZE_HANDLE_WIDTH
+      : TASK_INSPECTOR_MAX_WIDTH;
+  const maxWidth = Math.max(
+    TASK_INSPECTOR_MIN_WIDTH,
+    Math.min(TASK_INSPECTOR_MAX_WIDTH, viewportMax),
+  );
+  return Math.min(Math.max(Math.round(width), TASK_INSPECTOR_MIN_WIDTH), maxWidth);
+}
+
+type PendingFollowUp = {
+  id: string;
+  prompt: string;
+  content: string;
+  createdAt: string;
+  status: "sending" | "failed";
+};
+
+type TaskThreadMessage =
+  | {
+      type: "user_request";
+      id: string;
+      content: string;
+      createdAt: string;
+      label: string;
+      pending?: PendingFollowUp["status"];
+      prompt?: string;
+    }
+  | { type: "agent_result"; id: string; execution: TaskExecution; runIndex: number }
+  | { type: "next_action"; id: string; execution: TaskExecution; content: string }
+  | { type: "artifact_group"; id: string; execution: TaskExecution };
+
+type InspectorTab = "details" | "context" | "runs" | "artifacts";
+
+const INSPECTOR_TABS: Array<{
+  value: InspectorTab;
+  label: string;
+  icon: LucideIcon;
+}> = [
+  { value: "details", label: "Details", icon: Info },
+  { value: "context", label: "Context", icon: MessageSquareText },
+  { value: "runs", label: "Runs", icon: Clock3 },
+  { value: "artifacts", label: "Files", icon: FileText },
+];
 
 export function TaskModal(props: {
   task: Task;
@@ -87,15 +220,29 @@ export function TaskModal(props: {
   const [saving, setSaving] = useState(false);
   const [titleTouched, setTitleTouched] = useState(Boolean(props.task.title));
   const [attemptedSave, setAttemptedSave] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const finished =
-    props.task.status === "done" || props.task.execution?.status === "succeeded";
-  const canSave = useMemo(() => title.trim().length > 0, [title]);
-  const showTitleError = !canSave && (titleTouched || attemptedSave);
+  useEffect(() => {
+    setTitle(props.task.title);
+    setDescription(props.task.description);
+    setStatus(props.task.status);
+    setPriority(props.task.priority);
+    setFocusAreaId(props.task.focusAreaId ?? NO_FOCUS_AREA);
+    setTitleTouched(Boolean(props.task.title));
+    setAttemptedSave(false);
+  }, [props.task.id]);
+
+  const isCreateFlow = !props.task.id;
+  const activeExecution = isTaskExecutionActive(props.task.execution);
+  const detailsLocked = !isCreateFlow && Boolean(props.task.execution);
+  const canSave = useMemo(
+    () => title.trim().length > 0 && !detailsLocked,
+    [detailsLocked, title],
+  );
+  const showTitleError = !detailsLocked && !canSave && (titleTouched || attemptedSave);
 
   async function submit() {
     setAttemptedSave(true);
+    if (detailsLocked) return;
     if (!canSave) return;
     setSaving(true);
     try {
@@ -112,281 +259,334 @@ export function TaskModal(props: {
     }
   }
 
-  async function requestDelete() {
-    if (!props.onDelete) {
-      return;
-    }
-    if (!confirmingDelete) {
-      setConfirmingDelete(true);
-      return;
-    }
-    setSaving(true);
-    try {
-      await props.onDelete();
-    } finally {
-      setSaving(false);
-    }
+  if (isCreateFlow) {
+    return (
+      <CreateTaskDialog
+        title={props.title}
+        taskTitle={title}
+        description={description}
+        status={status}
+        priority={priority}
+        focusAreaId={focusAreaId}
+        focusAreas={props.focusAreas}
+        saving={saving}
+        canSave={canSave}
+        showTitleError={showTitleError}
+        onClose={props.onClose}
+        onSubmit={submit}
+        onTitleChange={setTitle}
+        onDescriptionChange={setDescription}
+        onStatusChange={setStatus}
+        onPriorityChange={setPriority}
+        onFocusAreaChange={setFocusAreaId}
+        onTitleTouched={() => setTitleTouched(true)}
+      />
+    );
   }
 
+  return (
+    <TaskDetailWorkspace
+      task={props.task}
+      title={props.title}
+      taskTitle={title}
+      description={description}
+      status={status}
+      priority={priority}
+      focusAreaId={focusAreaId}
+      focusAreas={props.focusAreas}
+      saving={saving}
+      canSave={canSave}
+      showTitleError={showTitleError}
+      detailsLocked={detailsLocked}
+      statusDisabled={activeExecution}
+      onClose={props.onClose}
+      onDelete={props.onDelete}
+      onSubmit={submit}
+      onTitleChange={setTitle}
+      onDescriptionChange={setDescription}
+      onStatusChange={setStatus}
+      onPriorityChange={setPriority}
+      onFocusAreaChange={setFocusAreaId}
+      onTitleTouched={() => setTitleTouched(true)}
+      onAskFollowUp={props.onAskFollowUp}
+      onCreateDraft={props.onCreateDraft}
+    />
+  );
+}
+
+function CreateTaskDialog(props: {
+  title: string;
+  taskTitle: string;
+  description: string;
+  status: TaskStatus;
+  priority: Priority;
+  focusAreaId: string;
+  focusAreas: FocusArea[];
+  saving: boolean;
+  canSave: boolean;
+  showTitleError: boolean;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+  onTitleChange: (value: string) => void;
+  onDescriptionChange: (value: string) => void;
+  onStatusChange: (value: TaskStatus) => void;
+  onPriorityChange: (value: Priority) => void;
+  onFocusAreaChange: (value: string) => void;
+  onTitleTouched: () => void;
+}) {
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
       <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{finished ? props.task.title || props.title : props.title}</DialogTitle>
+          <DialogTitle>{props.title}</DialogTitle>
           <DialogDescription>
-            {finished
-              ? "Completed result."
-              : "Capture the work and focus area. If AI works on it, progress and follow-ups stay attached to the task."}
+            Capture the work and focus area. If AI works on it, progress and follow-ups stay attached to the task.
           </DialogDescription>
         </DialogHeader>
 
-        {finished ? (
-          <>
-            <FinishedTaskContent
-              task={props.task}
-              onAskFollowUp={props.onAskFollowUp}
-              onCreateDraft={props.onCreateDraft}
-            />
-            <DialogFooter>
-              <Button variant="outline" onClick={props.onClose}>
-                Close
-              </Button>
-            </DialogFooter>
-          </>
-        ) : (
-          <>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="task-title">Title</FieldLabel>
-                <Input
-                  id="task-title"
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  onBlur={() => setTitleTouched(true)}
-                  autoFocus
-                  placeholder="Give this task a clear name"
-                  aria-invalid={showTitleError}
-                />
-                {showTitleError && <FieldDescription>Title is required.</FieldDescription>}
-              </Field>
+        <TaskDetailsFields
+          idPrefix="task-create"
+          taskTitle={props.taskTitle}
+          description={props.description}
+          status={props.status}
+          priority={props.priority}
+          focusAreaId={props.focusAreaId}
+          focusAreas={props.focusAreas}
+          showTitleError={props.showTitleError}
+          autoFocus
+          onTitleChange={props.onTitleChange}
+          onDescriptionChange={props.onDescriptionChange}
+          onStatusChange={props.onStatusChange}
+          onPriorityChange={props.onPriorityChange}
+          onFocusAreaChange={props.onFocusAreaChange}
+          onTitleTouched={props.onTitleTouched}
+        />
 
-              <Field>
-                <FieldLabel htmlFor="task-notes">Notes</FieldLabel>
-                <Textarea
-                  id="task-notes"
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  className="min-h-24 sm:min-h-28"
-                />
-              </Field>
-
-              <div className="grid gap-4 md:grid-cols-3">
-                <Field>
-                  <FieldLabel>Status</FieldLabel>
-                  <Select value={status} onValueChange={(value) => setStatus(value as TaskStatus)}>
-                    <SelectTrigger className="w-full" aria-label="Status">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {TASK_STATUSES.map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {COLUMN_LABELS[value]}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-
-                <Field>
-                  <FieldLabel>Priority</FieldLabel>
-                  <Select
-                    value={priority}
-                    onValueChange={(value) => setPriority(value as Priority)}
-                  >
-                    <SelectTrigger className="w-full" aria-label="Priority">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {PRIORITIES.map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {value}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-
-                <Field>
-                  <FieldLabel>Focus area</FieldLabel>
-                  <Select value={focusAreaId} onValueChange={setFocusAreaId}>
-                    <SelectTrigger className="w-full" aria-label="Focus area">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value={NO_FOCUS_AREA}>No focus area</SelectItem>
-                        {props.focusAreas.map((area) => (
-                          <SelectItem key={area.id} value={area.id}>
-                            <FocusAreaOption area={area} />
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
-            </FieldGroup>
-
-            {props.task.execution && (
-              <TaskExecutionPanel
-                task={props.task}
-                execution={props.task.execution}
-                onAskFollowUp={props.onAskFollowUp}
-                onCreateDraft={props.onCreateDraft}
-              />
-            )}
-
-            <DialogFooter>
-              {props.onDelete && (
-                <Button variant="destructive" onClick={requestDelete} disabled={saving}>
-                  <Trash2 data-icon="inline-start" />
-                  {confirmingDelete ? "Confirm delete" : "Delete"}
-                </Button>
-              )}
-              <Button variant="outline" onClick={props.onClose}>
-                Cancel
-              </Button>
-              <Button disabled={!canSave || saving} onClick={submit}>
-                {saving ? (
-                  <LoaderCircle className="animate-spin" data-icon="inline-start" />
-                ) : null}
-                {saving ? "Saving..." : "Save task"}
-              </Button>
-            </DialogFooter>
-          </>
-        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!props.canSave || props.saving} onClick={props.onSubmit}>
+            {props.saving ? (
+              <LoaderCircle className="animate-spin" data-icon="inline-start" />
+            ) : null}
+            {props.saving ? "Saving..." : "Save task"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function FinishedTaskContent(props: {
+function TaskDetailWorkspace(props: {
   task: Task;
+  title: string;
+  taskTitle: string;
+  description: string;
+  status: TaskStatus;
+  priority: Priority;
+  focusAreaId: string;
+  focusAreas: FocusArea[];
+  saving: boolean;
+  canSave: boolean;
+  showTitleError: boolean;
+  detailsLocked: boolean;
+  statusDisabled: boolean;
+  onClose: () => void;
+  onDelete?: () => Promise<void>;
+  onSubmit: () => Promise<void>;
+  onTitleChange: (value: string) => void;
+  onDescriptionChange: (value: string) => void;
+  onStatusChange: (value: TaskStatus) => void;
+  onPriorityChange: (value: Priority) => void;
+  onFocusAreaChange: (value: string) => void;
+  onTitleTouched: () => void;
   onAskFollowUp?: (prompt: string) => Promise<void>;
   onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
-}) {
-  const notes = props.task.description.trim();
-
-  if (props.task.execution) {
-    return (
-      <div className="flex flex-col gap-4">
-        <TaskNotes notes={notes} />
-        <TaskExecutionPanel
-          task={props.task}
-          execution={props.task.execution}
-          onAskFollowUp={props.onAskFollowUp}
-          onCreateDraft={props.onCreateDraft}
-          mode="finished"
-        />
-      </div>
-    );
-  }
-
-  return (
-    <section className="flex flex-col gap-3" aria-label="Completed task">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-medium">Task complete</h3>
-        <Badge variant="secondary">
-          <CheckCircle2 data-icon="inline-start" />
-          Done
-        </Badge>
-      </div>
-      <Item variant="muted">
-        <ItemMedia variant="icon">
-          <CheckCircle2 />
-        </ItemMedia>
-        <ItemContent>
-          <ItemTitle>Completed</ItemTitle>
-          <p className="text-sm text-muted-foreground">
-            {notes || "No notes saved."}
-          </p>
-        </ItemContent>
-      </Item>
-    </section>
-  );
-}
-
-function TaskNotes(props: { notes: string }) {
-  return (
-    <section className="flex flex-col gap-2" aria-label="Task notes">
-      <h3 className="text-sm font-medium">Notes</h3>
-      <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
-        {props.notes || "No notes saved."}
-      </p>
-    </section>
-  );
-}
-
-function FocusAreaOption(props: { area: FocusArea }) {
-  const style = getFocusAreaStyle(props.area.color);
-  return (
-    <span className="inline-flex min-w-0 items-center gap-2">
-      <span
-        aria-hidden="true"
-        className="size-2.5 shrink-0 rounded-full"
-        style={{ backgroundColor: style.accent }}
-      />
-      <span className="truncate">{props.area.label}</span>
-    </span>
-  );
-}
-
-function TaskExecutionPanel(props: {
-  task: Task;
-  execution: TaskExecution;
-  onAskFollowUp?: (prompt: string) => Promise<void>;
-  onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
-  mode?: "active" | "finished";
 }) {
   const [followUp, setFollowUp] = useState("");
   const [asking, setAsking] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [nextActionConsumed, setNextActionConsumed] = useState(false);
+  const [pendingFollowUps, setPendingFollowUps] = useState<PendingFollowUp[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const finished = props.mode === "finished";
-  const running =
-    !finished && (props.execution.status === "queued" || props.execution.status === "running");
-  const [showExecutionLog, setShowExecutionLog] = useState(
-    props.execution.status === "running" || props.execution.status === "failed",
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => Boolean(props.task.execution));
+  const [inspectorWidth, setInspectorWidth] = useState(readStoredInspectorWidth);
+  const [resizingInspector, setResizingInspector] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const latestExecution = props.task.execution;
+  const running = isTaskExecutionActive(latestExecution);
+  const nextAction = useMemo(
+    () => (latestExecution ? extractExecutionNextAction(latestExecution) : null),
+    [latestExecution],
   );
-
-  useEffect(() => {
-    if (props.execution.status === "running" || props.execution.status === "failed") {
-      setShowExecutionLog(true);
-    }
-  }, [props.execution.status]);
-
-  const nextAction = useMemo(() => extractExecutionNextAction(props.execution), [props.execution]);
 
   useEffect(() => {
     setNextActionConsumed(false);
   }, [nextAction]);
 
-  async function askFollowUp(promptOverride?: string) {
+  useEffect(() => {
+    setFollowUp("");
+    setPendingFollowUps([]);
+    setNotice(null);
+    setError(null);
+    setDeleteDialogOpen(false);
+    setDeleteError(null);
+    setInspectorCollapsed(Boolean(props.task.execution));
+  }, [props.task.id]);
+
+  useEffect(() => {
+    storeInspectorWidth(inspectorWidth);
+  }, [inspectorWidth]);
+
+  useEffect(
+    () => () => {
+      resizeCleanupRef.current?.();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (inspectorCollapsed) {
+      return;
+    }
+
+    function clampToWorkspace() {
+      const totalWidth = workspaceRef.current?.getBoundingClientRect().width;
+      setInspectorWidth((current) => clampInspectorWidth(current, totalWidth));
+    }
+
+    clampToWorkspace();
+    window.addEventListener("resize", clampToWorkspace);
+    return () => window.removeEventListener("resize", clampToWorkspace);
+  }, [inspectorCollapsed]);
+
+  function workspaceWidth() {
+    return workspaceRef.current?.getBoundingClientRect().width;
+  }
+
+  function resizeInspectorToPointer(clientX: number) {
+    const rect = workspaceRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    const nextWidth = rect.right - clientX - TASK_INSPECTOR_RESIZE_HANDLE_WIDTH / 2;
+    setInspectorWidth(clampInspectorWidth(nextWidth, rect.width));
+  }
+
+  function resizeInspectorBy(delta: number) {
+    setInspectorWidth((current) => clampInspectorWidth(current + delta, workspaceWidth()));
+  }
+
+  function resizeInspectorTo(width: number) {
+    setInspectorWidth(clampInspectorWidth(width, workspaceWidth()));
+  }
+
+  function beginInspectorResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    resizeCleanupRef.current?.();
+    resizeInspectorToPointer(event.clientX);
+    setResizingInspector(true);
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function stopResize() {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setResizingInspector(false);
+      resizeCleanupRef.current = null;
+    }
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      moveEvent.preventDefault();
+      resizeInspectorToPointer(moveEvent.clientX);
+    }
+
+    resizeCleanupRef.current = stopResize;
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+  }
+
+  function handleInspectorResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 64 : 24;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      resizeInspectorBy(step);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      resizeInspectorBy(-step);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      resizeInspectorTo(TASK_INSPECTOR_MIN_WIDTH);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      resizeInspectorTo(TASK_INSPECTOR_MAX_WIDTH);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!props.onDelete) {
+      return;
+    }
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await props.onDelete();
+      setDeleteDialogOpen(false);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function askFollowUp(
+    promptOverride?: string,
+    displayOverride?: string,
+    pendingId?: string,
+  ) {
     const prompt = (promptOverride ?? followUp).trim();
     if (!prompt || !props.onAskFollowUp) {
       return;
     }
+    const id = pendingId ?? `pending-${Date.now()}`;
+    const content = displayOverride ?? prompt;
     setAsking(true);
     setNotice(null);
     setError(null);
+    setPendingFollowUps((current) =>
+      pendingId
+        ? current.map((entry) => (entry.id === pendingId ? { ...entry, status: "sending" } : entry))
+        : [
+            ...current,
+            {
+              id,
+              prompt,
+              content,
+              createdAt: new Date().toISOString(),
+              status: "sending",
+            },
+          ],
+    );
     try {
       await props.onAskFollowUp(prompt);
+      setPendingFollowUps((current) => current.filter((entry) => entry.id !== id));
       if (!promptOverride) {
         setFollowUp("");
       }
@@ -394,28 +594,36 @@ function TaskExecutionPanel(props: {
         setNextActionConsumed(true);
       }
       setNotice(
-        finished
-          ? "Follow-up sent."
-          : running
-            ? "Follow-up queued. It will start after the current work finishes."
-            : "Follow-up queued.",
+        running
+          ? "Follow-up queued. It will start after the current work finishes."
+          : "Follow-up queued.",
       );
     } catch (err) {
+      setPendingFollowUps((current) =>
+        current.map((entry) => (entry.id === id ? { ...entry, status: "failed" } : entry)),
+      );
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setAsking(false);
     }
   }
 
+  async function retryPendingFollowUp(entry: PendingFollowUp) {
+    await askFollowUp(entry.prompt, entry.content, entry.id);
+  }
+
   async function runNextActionAsFollowUp() {
     if (!nextAction) {
       return;
     }
-    await askFollowUp(formatNextActionFollowUpPrompt(props.task, props.execution, nextAction));
+    await askFollowUp(
+      formatNextActionFollowUpPrompt(props.task, latestExecution!, nextAction),
+      `Run next action: ${nextAction}`,
+    );
   }
 
   async function createDraftFromNextAction() {
-    if (!nextAction || !props.onCreateDraft) {
+    if (!nextAction || !latestExecution || !props.onCreateDraft) {
       return;
     }
     setCreatingDraft(true);
@@ -424,7 +632,7 @@ function TaskExecutionPanel(props: {
     try {
       await props.onCreateDraft({
         title: formatNextActionTaskTitle(nextAction),
-        description: formatNextActionTaskDescription(props.task, props.execution, nextAction),
+        description: formatNextActionTaskDescription(props.task, latestExecution, nextAction),
         status: "draft",
         priority: props.task.priority,
         focusAreaId: props.task.focusAreaId,
@@ -441,89 +649,638 @@ function TaskExecutionPanel(props: {
   }
 
   return (
-    <section
-      className="flex min-w-0 flex-col gap-4 overflow-hidden"
-      aria-label={finished ? "Task result" : "AI work"}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
-            <span>{finished ? "Task chat" : running ? "Running work" : "AI work"}</span>
-            <Badge variant={props.execution.status === "failed" ? "destructive" : "secondary"}>
-              {executionStatusIcon(props.execution)}
-              {formatExecutionStatus(props.execution)}
-            </Badge>
-          </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {formatExecutionWindow(props.execution)}
-          </p>
-        </div>
-        {props.execution.model && <Badge variant="outline">{props.execution.model}</Badge>}
-      </div>
-
-      {!finished && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">Current step</span>
-            <span className="text-right font-medium">
-              {formatExecutionMessage(props.execution.progressSummary)}
-            </span>
-          </div>
-          <Progress value={executionProgress(props.execution)} />
-        </div>
-      )}
-
-      {props.execution.error && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertDescription>{props.execution.error}</AlertDescription>
-        </Alert>
-      )}
-
-      <Separator />
-      <ExecutionInfo execution={props.execution} />
-
-      <Separator />
-      <ExecutionResult execution={props.execution} />
-
-      {props.execution.previousExecutions?.length ? (
-        <>
-          <Separator />
-          <PreviousExecutionResults executions={props.execution.previousExecutions} />
-        </>
-      ) : null}
-
-      {(notice || error) && (
-        <Alert variant={error ? "destructive" : "default"}>
-          <MessageSquareText />
-          <AlertDescription>{error ?? notice}</AlertDescription>
-        </Alert>
-      )}
-
-      {nextAction && (props.onAskFollowUp || props.onCreateDraft) && (
-        <>
-          <Separator />
-          <section className="flex min-w-0 flex-col gap-2" aria-label="Next action">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-medium">Next action</h3>
-                <p className="mt-1 break-words text-sm text-muted-foreground">{nextAction}</p>
+    <Sheet open onOpenChange={(open) => !open && props.onClose()}>
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        className="h-dvh gap-0 p-0 data-[side=right]:w-screen data-[side=right]:max-w-none data-[side=right]:sm:w-[min(100vw,72rem)] data-[side=right]:sm:max-w-none"
+      >
+        <SheetHeader className="shrink-0 border-b p-0">
+          <div className="flex min-w-0 items-start gap-3 p-3 sm:p-4">
+            <SheetClose asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="Close task">
+                <X data-icon="icon" />
+              </Button>
+            </SheetClose>
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <SheetTitle className="sr-only">{props.title}</SheetTitle>
+              <SheetDescription className="sr-only">{formatTaskSurfaceState(props.task)}</SheetDescription>
+              <Input
+                id="task-title-inline"
+                value={props.taskTitle}
+                onChange={(event) => props.onTitleChange(event.target.value)}
+                onBlur={props.onTitleTouched}
+                placeholder="Give this task a clear name"
+                aria-invalid={props.showTitleError}
+                readOnly={props.detailsLocked}
+                aria-readonly={props.detailsLocked}
+                className="h-9 border-transparent bg-transparent px-0 text-base font-medium shadow-none focus-visible:border-input focus-visible:px-2 sm:text-lg"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <TaskStateBadge task={props.task} />
+                {latestExecution?.model && <Badge variant="outline">{latestExecution.model}</Badge>}
+                <span className="text-sm text-muted-foreground">
+                  Last activity {formatEventTime(latestExecution?.updatedAt ?? props.task.updatedAt)}
+                </span>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-                {props.onAskFollowUp && (
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {!props.detailsLocked && (
+                <Button
+                  size="sm"
+                  onClick={props.onSubmit}
+                  disabled={!props.canSave || props.saving}
+                >
+                  {props.saving ? (
+                    <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                  ) : null}
+                  {props.saving ? (
+                    "Saving..."
+                  ) : (
+                    <>
+                      <span className="sm:hidden">Save</span>
+                      <span className="hidden sm:inline">Save details</span>
+                    </>
+                  )}
+                </Button>
+              )}
+              {props.onDelete && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="Task actions">
+                      <MoreHorizontal data-icon="icon" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 data-icon="inline-start" />
+                      Delete task
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          </div>
+          {running && latestExecution && (
+            <div className="border-t px-3 py-2 sm:px-4">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Current step</span>
+                <span className="text-right font-medium">
+                  {formatExecutionMessage(latestExecution.progressSummary)}
+                </span>
+              </div>
+              <Progress className="mt-2" value={executionProgress(latestExecution)} />
+            </div>
+          )}
+        </SheetHeader>
+
+        <div
+          ref={workspaceRef}
+          data-slot="task-detail-workspace"
+          data-inspector-state={inspectorCollapsed ? "collapsed" : "expanded"}
+          style={
+            {
+              "--task-inspector-width": `${Math.round(inspectorWidth)}px`,
+            } as CSSProperties
+          }
+          className={cn(
+            "grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-rows-1",
+            inspectorCollapsed
+              ? "lg:grid-cols-[minmax(0,1fr)_3.5rem]"
+              : "lg:grid-cols-[minmax(0,1fr)_0.75rem_minmax(20rem,var(--task-inspector-width))]",
+            resizingInspector && "cursor-col-resize",
+          )}
+        >
+          <TaskConversation
+            task={props.task}
+            pendingFollowUps={pendingFollowUps}
+            notice={notice}
+            error={error}
+            followUp={followUp}
+            asking={asking}
+            wide={inspectorCollapsed}
+            nextActionConsumed={nextActionConsumed}
+            creatingDraft={creatingDraft}
+            onFollowUpChange={setFollowUp}
+            onAskFollowUp={() => void askFollowUp()}
+            onRetryPendingFollowUp={(entry) => void retryPendingFollowUp(entry)}
+            onRunNextAction={nextAction && props.onAskFollowUp ? () => void runNextActionAsFollowUp() : undefined}
+            onCreateDraft={nextAction && props.onCreateDraft ? () => void createDraftFromNextAction() : undefined}
+          />
+          {!inspectorCollapsed && (
+            <TaskInspectorResizeHandle
+              width={inspectorWidth}
+              resizing={resizingInspector}
+              onPointerDown={beginInspectorResize}
+              onKeyDown={handleInspectorResizeKeyDown}
+            />
+          )}
+          <TaskInspector
+            task={props.task}
+            taskTitle={props.taskTitle}
+            description={props.description}
+            status={props.status}
+            priority={props.priority}
+            focusAreaId={props.focusAreaId}
+            focusAreas={props.focusAreas}
+            saving={props.saving}
+            canSave={props.canSave}
+            showTitleError={props.showTitleError}
+            deleting={deleting}
+            detailsLocked={props.detailsLocked}
+            collapsed={inspectorCollapsed}
+            statusDisabled={props.statusDisabled}
+            onCollapsedChange={setInspectorCollapsed}
+            onSubmit={props.onSubmit}
+            onDeleteRequest={props.onDelete ? () => setDeleteDialogOpen(true) : undefined}
+            onTitleChange={props.onTitleChange}
+            onDescriptionChange={props.onDescriptionChange}
+            onStatusChange={props.onStatusChange}
+            onPriorityChange={props.onPriorityChange}
+            onFocusAreaChange={props.onFocusAreaChange}
+            onTitleTouched={props.onTitleTouched}
+          />
+        </div>
+        {props.onDelete && (
+          <TaskDeleteDialog
+            open={deleteDialogOpen}
+            taskTitle={props.task.title}
+            deleting={deleting}
+            error={deleteError}
+            onOpenChange={(open) => {
+              setDeleteDialogOpen(open);
+              if (open) {
+                setDeleteError(null);
+              }
+            }}
+            onConfirm={() => void confirmDelete()}
+          />
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function TaskInspectorResizeHandle(props: {
+  width: number;
+  resizing: boolean;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-label="Resize task details"
+      aria-orientation="vertical"
+      aria-valuemin={TASK_INSPECTOR_MIN_WIDTH}
+      aria-valuemax={TASK_INSPECTOR_MAX_WIDTH}
+      aria-valuenow={Math.round(props.width)}
+      tabIndex={0}
+      className={cn(
+        "group hidden min-h-0 touch-none items-center justify-center bg-border/40 outline-none transition-colors lg:flex",
+        "cursor-col-resize hover:bg-border focus-visible:bg-border focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0",
+        props.resizing && "bg-border",
+      )}
+      onPointerDown={props.onPointerDown}
+      onKeyDown={props.onKeyDown}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "h-10 w-1 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-muted-foreground/70",
+          props.resizing && "bg-muted-foreground/80",
+        )}
+      />
+    </div>
+  );
+}
+
+function TaskDeleteDialog(props: {
+  open: boolean;
+  taskTitle: string;
+  deleting: boolean;
+  error: string | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogMedia>
+            <Trash2 />
+          </AlertDialogMedia>
+          <AlertDialogTitle>Delete this task?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently removes "{props.taskTitle || "Untitled task"}" and its saved agent
+            history from the local board.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {props.error && (
+          <Alert variant="destructive">
+            <AlertTriangle />
+            <AlertDescription>{props.error}</AlertDescription>
+          </Alert>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={props.deleting}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={props.deleting}
+            onClick={(event) => {
+              event.preventDefault();
+              props.onConfirm();
+            }}
+          >
+            {props.deleting ? (
+              <LoaderCircle className="animate-spin" data-icon="inline-start" />
+            ) : (
+              <Trash2 data-icon="inline-start" />
+            )}
+            {props.deleting ? "Deleting..." : "Delete permanently"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function TaskDetailsFields(props: {
+  idPrefix: string;
+  taskTitle: string;
+  description: string;
+  status: TaskStatus;
+  priority: Priority;
+  focusAreaId: string;
+  focusAreas: FocusArea[];
+  showTitleError: boolean;
+  autoFocus?: boolean;
+  disabled?: boolean;
+  stackedControls?: boolean;
+  statusDisabled?: boolean;
+  onTitleChange: (value: string) => void;
+  onDescriptionChange: (value: string) => void;
+  onStatusChange: (value: TaskStatus) => void;
+  onPriorityChange: (value: Priority) => void;
+  onFocusAreaChange: (value: string) => void;
+  onTitleTouched: () => void;
+}) {
+  return (
+    <FieldGroup>
+      <Field data-invalid={props.showTitleError} data-disabled={props.disabled}>
+        <FieldLabel htmlFor={`${props.idPrefix}-title`}>Title</FieldLabel>
+        <Input
+          id={`${props.idPrefix}-title`}
+          value={props.taskTitle}
+          onChange={(event) => props.onTitleChange(event.target.value)}
+          onBlur={props.onTitleTouched}
+          autoFocus={props.autoFocus}
+          placeholder="Give this task a clear name"
+          aria-invalid={props.showTitleError}
+          disabled={props.disabled}
+        />
+        {props.showTitleError && <FieldDescription>Title is required.</FieldDescription>}
+      </Field>
+
+      <Field data-disabled={props.disabled}>
+        <FieldLabel htmlFor={`${props.idPrefix}-notes`}>Notes</FieldLabel>
+        <Textarea
+          id={`${props.idPrefix}-notes`}
+          value={props.description}
+          onChange={(event) => props.onDescriptionChange(event.target.value)}
+          className="min-h-28"
+          disabled={props.disabled}
+        />
+      </Field>
+
+      <FieldGroup className={props.stackedControls ? "grid gap-4" : "grid gap-4 md:grid-cols-3"}>
+        <Field data-disabled={props.disabled || props.statusDisabled}>
+          <FieldLabel>Status</FieldLabel>
+          {props.disabled ? (
+            <Input aria-label="Status" value={COLUMN_LABELS[props.status]} readOnly disabled />
+          ) : (
+            <Select
+              value={props.status}
+              onValueChange={(value) => props.onStatusChange(value as TaskStatus)}
+              disabled={props.statusDisabled}
+            >
+              <SelectTrigger
+                className="w-full"
+                aria-label="Status"
+                disabled={props.statusDisabled}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {TASK_STATUSES.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {COLUMN_LABELS[value]}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          )}
+          {!props.disabled && props.statusDisabled && (
+            <FieldDescription>Status is locked while work is active.</FieldDescription>
+          )}
+        </Field>
+
+        <Field data-disabled={props.disabled}>
+          <FieldLabel>Priority</FieldLabel>
+          {props.disabled ? (
+            <Input aria-label="Priority" value={props.priority} readOnly disabled />
+          ) : (
+            <Select
+              value={props.priority}
+              onValueChange={(value) => props.onPriorityChange(value as Priority)}
+            >
+              <SelectTrigger className="w-full" aria-label="Priority">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {PRIORITIES.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {value}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          )}
+        </Field>
+
+        <Field data-disabled={props.disabled}>
+          <FieldLabel>Focus area</FieldLabel>
+          {props.disabled ? (
+            <Input
+              aria-label="Focus area"
+              value={formatFocusAreaLabel(props.focusAreaId, props.focusAreas)}
+              readOnly
+              disabled
+            />
+          ) : (
+            <Select value={props.focusAreaId} onValueChange={props.onFocusAreaChange}>
+              <SelectTrigger className="w-full" aria-label="Focus area">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={NO_FOCUS_AREA}>No focus area</SelectItem>
+                  {props.focusAreas.map((area) => (
+                    <SelectItem key={area.id} value={area.id}>
+                      <FocusAreaOption area={area} />
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          )}
+        </Field>
+      </FieldGroup>
+    </FieldGroup>
+  );
+}
+
+function TaskConversation(props: {
+  task: Task;
+  pendingFollowUps: PendingFollowUp[];
+  notice: string | null;
+  error: string | null;
+  followUp: string;
+  asking: boolean;
+  wide: boolean;
+  nextActionConsumed: boolean;
+  creatingDraft: boolean;
+  onFollowUpChange: (value: string) => void;
+  onAskFollowUp: () => void;
+  onRetryPendingFollowUp: (entry: PendingFollowUp) => void;
+  onRunNextAction?: () => void;
+  onCreateDraft?: () => void;
+}) {
+  const threadEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const scrollIntoView = threadEndRef.current?.scrollIntoView;
+      if (typeof scrollIntoView === "function") {
+        scrollIntoView.call(threadEndRef.current, { block: "end" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    props.task.id,
+    props.task.execution?.id,
+    props.task.execution?.updatedAt,
+    props.pendingFollowUps.length,
+  ]);
+
+  return (
+    <section className="flex min-h-0 flex-col" aria-label="Task conversation">
+      <ScrollArea className="min-h-0 flex-1">
+        <div
+          className={cn(
+            "mx-auto flex w-full flex-col gap-4 p-4 sm:p-5",
+            props.wide ? "max-w-5xl" : "max-w-3xl",
+          )}
+        >
+          <TaskThread
+            task={props.task}
+            pendingFollowUps={props.pendingFollowUps}
+            nextActionConsumed={props.nextActionConsumed}
+            creatingDraft={props.creatingDraft}
+            onRetryPendingFollowUp={props.onRetryPendingFollowUp}
+            onRunNextAction={props.onRunNextAction}
+            onCreateDraft={props.onCreateDraft}
+          />
+          <div ref={threadEndRef} aria-hidden="true" />
+        </div>
+      </ScrollArea>
+      <div className="shrink-0 border-t bg-background p-3 sm:p-4">
+        <div
+          className={cn(
+            "mx-auto flex w-full flex-col gap-3",
+            props.wide ? "max-w-5xl" : "max-w-3xl",
+          )}
+        >
+          {(props.notice || props.error) && (
+            <Alert variant={props.error ? "destructive" : "default"}>
+              <MessageSquareText />
+              <AlertDescription>{props.error ?? props.notice}</AlertDescription>
+            </Alert>
+          )}
+          <TaskThreadComposer
+            task={props.task}
+            followUp={props.followUp}
+            asking={props.asking}
+            onFollowUpChange={props.onFollowUpChange}
+            onAskFollowUp={props.onAskFollowUp}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TaskThread(props: {
+  task: Task;
+  pendingFollowUps: PendingFollowUp[];
+  nextActionConsumed: boolean;
+  creatingDraft: boolean;
+  onRetryPendingFollowUp: (entry: PendingFollowUp) => void;
+  onRunNextAction?: () => void;
+  onCreateDraft?: () => void;
+}) {
+  const messages = useMemo(
+    () => buildTaskThreadMessages(props.task, props.pendingFollowUps),
+    [props.task, props.pendingFollowUps],
+  );
+  const hasExecutions = Boolean(props.task.execution);
+
+  return (
+    <ItemGroup>
+      {messages.map((message) => (
+        <TaskThreadMessageRow
+          key={message.id}
+          message={message}
+          nextActionConsumed={props.nextActionConsumed}
+          creatingDraft={props.creatingDraft}
+          onRetryPendingFollowUp={props.onRetryPendingFollowUp}
+          onRunNextAction={props.onRunNextAction}
+          onCreateDraft={props.onCreateDraft}
+        />
+      ))}
+      {!hasExecutions && (
+        <Empty className="min-h-40 border">
+          <EmptyMedia variant="icon">
+            <MessageSquareText />
+          </EmptyMedia>
+          <EmptyHeader>
+            <EmptyTitle>No agent run yet</EmptyTitle>
+            <EmptyDescription>
+              Ask the agent to work on this task from the reply box below.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+    </ItemGroup>
+  );
+}
+
+function TaskThreadMessageRow(props: {
+  message: TaskThreadMessage;
+  nextActionConsumed: boolean;
+  creatingDraft: boolean;
+  onRetryPendingFollowUp: (entry: PendingFollowUp) => void;
+  onRunNextAction?: () => void;
+  onCreateDraft?: () => void;
+}) {
+  const message = props.message;
+  if (message.type === "user_request") {
+    return (
+      <div className="flex justify-start">
+        <Item
+          variant={message.pending === "failed" ? "outline" : "muted"}
+          className="items-start"
+        >
+          <ItemContent className="items-start text-left">
+            <ItemTitle>
+              <UserRound data-icon="inline-start" />
+              {message.label}
+              {message.pending && (
+                <Badge variant={message.pending === "failed" ? "destructive" : "secondary"}>
+                  {message.pending === "failed" ? "Not sent" : "Sending"}
+                </Badge>
+              )}
+            </ItemTitle>
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
+              {message.content}
+            </p>
+            {message.pending === "failed" && message.prompt && (
+              <ItemFooter className="justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    props.onRetryPendingFollowUp({
+                      id: message.id,
+                      prompt: message.prompt!,
+                      content: message.content,
+                      createdAt: message.createdAt,
+                      status: "failed",
+                    })
+                  }
+                >
+                  <RotateCcw data-icon="inline-start" />
+                  Retry
+                </Button>
+              </ItemFooter>
+            )}
+          </ItemContent>
+        </Item>
+      </div>
+    );
+  }
+
+  if (message.type === "agent_result") {
+    const output = displayExecutionOutput(message.execution).trim();
+    return (
+      <Item className="items-start px-0">
+        <ItemMedia variant="icon">
+          <Bot />
+        </ItemMedia>
+        <ItemContent className="min-w-0 gap-2">
+          <ItemTitle>Assistant</ItemTitle>
+          {output ? (
+            <MarkdownMessage>{output}</MarkdownMessage>
+          ) : message.execution.error ? (
+            <Alert variant="destructive">
+              <AlertTriangle />
+              <AlertDescription>{message.execution.error}</AlertDescription>
+            </Alert>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {isExecutionActive(message.execution) ? "No final result yet." : "No result saved."}
+            </p>
+          )}
+        </ItemContent>
+      </Item>
+    );
+  }
+
+  if (message.type === "next_action") {
+    return (
+      <section className="flex min-w-0 flex-col gap-2" aria-label="Next action">
+        <Item variant="outline" className="items-start">
+          <ItemMedia variant="icon">
+            <MessageSquareText />
+          </ItemMedia>
+          <ItemContent className="min-w-0">
+            <ItemHeader>
+              <ItemTitle>Next action</ItemTitle>
+            </ItemHeader>
+            <p className="break-words text-sm text-muted-foreground">{message.content}</p>
+            {(props.onRunNextAction || props.onCreateDraft) && (
+              <ItemFooter className="flex-wrap justify-start">
+                {props.onRunNextAction && (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => void runNextActionAsFollowUp()}
-                    disabled={asking || creatingDraft || nextActionConsumed}
+                    onClick={props.onRunNextAction}
+                    disabled={props.nextActionConsumed}
                   >
-                    {asking ? (
-                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
-                    ) : (
-                      <MessageSquareText data-icon="inline-start" />
-                    )}
-                    {asking ? "Sending..." : "Run as follow-up"}
+                    <MessageSquareText data-icon="inline-start" />
+                    Run as follow-up
                   </Button>
                 )}
                 {props.onCreateDraft && (
@@ -531,130 +1288,608 @@ function TaskExecutionPanel(props: {
                     type="button"
                     variant="secondary"
                     size="sm"
-                    onClick={() => void createDraftFromNextAction()}
-                    disabled={asking || creatingDraft || nextActionConsumed}
+                    onClick={props.onCreateDraft}
+                    disabled={props.creatingDraft || props.nextActionConsumed}
                   >
-                    {creatingDraft ? (
+                    {props.creatingDraft ? (
                       <LoaderCircle className="animate-spin" data-icon="inline-start" />
                     ) : (
                       <Plus data-icon="inline-start" />
                     )}
-                    {creatingDraft ? "Creating..." : "Draft task"}
+                    {props.creatingDraft ? "Creating..." : "Draft task"}
                   </Button>
                 )}
-              </div>
-            </div>
-          </section>
-        </>
-      )}
+              </ItemFooter>
+            )}
+          </ItemContent>
+        </Item>
+      </section>
+    );
+  }
 
-      {props.execution.artifacts.length > 0 && (
-        <>
-          <Separator />
-          <section className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">Artifacts</h3>
-            <ItemGroup>
-              {props.execution.artifacts.map((artifact) => (
-                <ArtifactRow artifact={artifact} key={artifact.id} />
-              ))}
-            </ItemGroup>
-          </section>
-        </>
-      )}
+  if (message.type !== "artifact_group") {
+    return null;
+  }
 
-      {props.onAskFollowUp && (
-        <>
-          <Separator />
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="task-follow-up">
-                {running ? "Ask while it works" : "Ask a follow-up"}
-              </FieldLabel>
-              <InputGroup className="min-h-28">
-                <InputGroupTextarea
-                  id="task-follow-up"
-                  value={followUp}
-                  onChange={(event) => setFollowUp(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                      event.preventDefault();
-                      void askFollowUp();
-                    }
-                  }}
-                  placeholder={
-                    running
-                      ? "Add context, ask a question, or request a change."
-                      : "Ask another question or request a change."
-                  }
-                  className="min-h-24"
-                />
-                <InputGroupAddon align="block-end" className="justify-between border-t">
-                  <InputGroupText>
-                    {running ? <Clock3 /> : <MessageSquareText />}
-                    <span>{running ? "Queues behind current work" : "Attached to task"}</span>
-                  </InputGroupText>
-                  <InputGroupButton
-                    type="button"
-                    variant="default"
-                    onClick={() => void askFollowUp()}
-                    disabled={asking || !followUp.trim()}
-                  >
-                    {asking ? (
-                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
-                    ) : (
-                      <Send data-icon="inline-start" />
-                    )}
-                    {asking ? "Sending..." : "Send"}
-                  </InputGroupButton>
-                </InputGroupAddon>
-              </InputGroup>
-              {!finished && (
-                <FieldDescription>
-                  Follow-ups stay attached to this task and queue behind active work.
-                </FieldDescription>
-              )}
-            </Field>
-          </FieldGroup>
-        </>
-      )}
-
-      <Separator />
-      <ExecutionOutput
-        execution={props.execution}
-        expanded={showExecutionLog}
-        onExpandedChange={setShowExecutionLog}
-      />
-    </section>
+  return (
+    <ItemGroup>
+      {message.execution.artifacts.map((artifact) => (
+        <ArtifactRow artifact={artifact} key={artifact.id} />
+      ))}
+    </ItemGroup>
   );
 }
 
-function ExecutionInfo(props: { execution: TaskExecution }) {
-  const rows = [
-    { label: "Status", value: formatExecutionStatus(props.execution) },
-    { label: "Provider", value: formatProvider(props.execution.provider) },
-    { label: "Model", value: props.execution.model ?? "Default" },
-    {
-      label: "Started",
-      value: props.execution.startedAt ? formatEventTime(props.execution.startedAt) : "Not started",
-    },
-    {
-      label: props.execution.endedAt ? "Finished" : "Updated",
-      value: formatEventTime(props.execution.endedAt ?? props.execution.updatedAt),
-    },
-  ];
+function TaskThreadComposer(props: {
+  task: Task;
+  followUp: string;
+  asking: boolean;
+  onFollowUpChange: (value: string) => void;
+  onAskFollowUp: () => void;
+}) {
+  const running = isTaskExecutionActive(props.task.execution);
+  return (
+    <Field>
+      <FieldLabel htmlFor="task-follow-up">Reply to task</FieldLabel>
+      <InputGroup className="min-h-32">
+        <InputGroupTextarea
+          id="task-follow-up"
+          value={props.followUp}
+          onChange={(event) => props.onFollowUpChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              props.onAskFollowUp();
+            }
+          }}
+          placeholder={composerPlaceholder(props.task)}
+          className="min-h-24"
+        />
+        <InputGroupAddon align="block-end" className="justify-between border-t">
+          <InputGroupText>
+            {running ? <Clock3 /> : <MessageSquareText />}
+            <span>{running ? "Queues behind current work" : "Attached to task"}</span>
+          </InputGroupText>
+          <InputGroupButton
+            type="button"
+            variant="default"
+            onClick={props.onAskFollowUp}
+            disabled={props.asking || !props.followUp.trim()}
+          >
+            {props.asking ? (
+              <LoaderCircle className="animate-spin" data-icon="inline-start" />
+            ) : (
+              <Send data-icon="inline-start" />
+            )}
+            {props.asking ? "Sending..." : "Send"}
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+      {running && <FieldDescription>This will queue behind the active run.</FieldDescription>}
+    </Field>
+  );
+}
+
+function TaskInspector(props: {
+  task: Task;
+  taskTitle: string;
+  description: string;
+  status: TaskStatus;
+  priority: Priority;
+  focusAreaId: string;
+  focusAreas: FocusArea[];
+  saving: boolean;
+  canSave: boolean;
+  showTitleError: boolean;
+  deleting: boolean;
+  detailsLocked: boolean;
+  collapsed: boolean;
+  statusDisabled: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
+  onSubmit: () => Promise<void>;
+  onDeleteRequest?: () => void;
+  onTitleChange: (value: string) => void;
+  onDescriptionChange: (value: string) => void;
+  onStatusChange: (value: TaskStatus) => void;
+  onPriorityChange: (value: Priority) => void;
+  onFocusAreaChange: (value: string) => void;
+  onTitleTouched: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<InspectorTab>("details");
+
+  function openInspectorTab(tab: InspectorTab) {
+    setActiveTab(tab);
+    props.onCollapsedChange(false);
+  }
+
+  if (props.collapsed) {
+    return (
+      <aside
+        aria-label="Task details"
+        data-state="collapsed"
+        className="min-h-0 border-t bg-muted/20 lg:border-l lg:border-t-0"
+      >
+        <TooltipProvider>
+          <div className="flex items-center gap-1 p-2 lg:h-full lg:flex-col">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Expand task details"
+                  aria-expanded={false}
+                  onClick={() => props.onCollapsedChange(false)}
+                >
+                  <PanelRightOpen data-icon="icon" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">Expand task details</TooltipContent>
+            </Tooltip>
+            <div className="flex min-w-0 flex-1 items-center gap-1 lg:flex-col lg:justify-start">
+              {INSPECTOR_TABS.map((tab) => {
+                const Icon = tab.icon;
+                return (
+                  <Tooltip key={tab.value}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant={activeTab === tab.value ? "secondary" : "ghost"}
+                        size="icon-sm"
+                        aria-label={`Open ${tab.label}`}
+                        onClick={() => openInspectorTab(tab.value)}
+                      >
+                        <Icon data-icon="icon" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">{tab.label}</TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </div>
+          </div>
+        </TooltipProvider>
+      </aside>
+    );
+  }
 
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Info</h3>
-      <dl className="grid gap-2 text-sm sm:grid-cols-2">
-        {rows.map((row) => (
-          <div className="min-w-0" key={row.label}>
-            <dt className="text-muted-foreground">{row.label}</dt>
-            <dd className="truncate font-medium">{row.value}</dd>
+    <aside
+      aria-label="Task details"
+      data-state="expanded"
+      className="min-h-0 border-t bg-muted/20 lg:border-l lg:border-t-0"
+    >
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as InspectorTab)}
+        className="h-full gap-0"
+      >
+        <div className="flex items-center gap-2 border-b p-3">
+          <TabsList className="grid min-w-0 flex-1 grid-cols-4">
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="context">Context</TabsTrigger>
+            <TabsTrigger value="runs">Runs</TabsTrigger>
+            <TabsTrigger value="artifacts">Files</TabsTrigger>
+          </TabsList>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Collapse task details"
+            aria-expanded={true}
+            onClick={() => props.onCollapsedChange(true)}
+          >
+            <PanelRightClose data-icon="icon" />
+          </Button>
+        </div>
+        <ScrollArea className="h-[42dvh] lg:h-full">
+          <div className="p-4">
+            <TabsContent value="details">
+              <div className="flex flex-col gap-5">
+                <TaskDetailsFields
+                  idPrefix="task-detail"
+                  taskTitle={props.taskTitle}
+                  description={props.description}
+                  status={props.status}
+                  priority={props.priority}
+                  focusAreaId={props.focusAreaId}
+                  focusAreas={props.focusAreas}
+                  showTitleError={props.showTitleError}
+                  disabled={props.detailsLocked}
+                  stackedControls
+                  statusDisabled={props.statusDisabled}
+                  onTitleChange={props.onTitleChange}
+                  onDescriptionChange={props.onDescriptionChange}
+                  onStatusChange={props.onStatusChange}
+                  onPriorityChange={props.onPriorityChange}
+                  onFocusAreaChange={props.onFocusAreaChange}
+                  onTitleTouched={props.onTitleTouched}
+                />
+                {props.detailsLocked && (
+                  <ItemGroup>
+                    <Item variant="muted" size="sm">
+                      <ItemMedia variant="icon">
+                        <LockKeyhole />
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle>Details locked</ItemTitle>
+                        <ItemDescription>Use the reply box for follow-ups.</ItemDescription>
+                      </ItemContent>
+                    </Item>
+                  </ItemGroup>
+                )}
+                <ItemGroup>
+                  <Item variant="muted" size="sm">
+                    <ItemContent>
+                      <ItemTitle>Created</ItemTitle>
+                      <ItemDescription>{formatEventTime(props.task.createdAt)}</ItemDescription>
+                    </ItemContent>
+                  </Item>
+                  <Item variant="muted" size="sm">
+                    <ItemContent>
+                      <ItemTitle>Updated</ItemTitle>
+                      <ItemDescription>{formatEventTime(props.task.updatedAt)}</ItemDescription>
+                    </ItemContent>
+                  </Item>
+                </ItemGroup>
+                <div className="flex flex-wrap gap-2">
+                  {!props.detailsLocked && (
+                    <Button
+                      type="button"
+                      onClick={props.onSubmit}
+                      disabled={!props.canSave || props.saving}
+                    >
+                      {props.saving ? (
+                        <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                      ) : null}
+                      {props.saving ? "Saving..." : "Save details"}
+                    </Button>
+                  )}
+                  {props.onDeleteRequest && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={props.onDeleteRequest}
+                      disabled={props.saving || props.deleting}
+                    >
+                      <Trash2 data-icon="inline-start" />
+                      Delete
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="context">
+              <TaskContextPanel task={props.task} />
+            </TabsContent>
+            <TabsContent value="runs">
+              <TaskRunsPanel task={props.task} />
+            </TabsContent>
+            <TabsContent value="artifacts">
+              <TaskArtifactsPanel task={props.task} />
+            </TabsContent>
           </div>
-        ))}
-      </dl>
-    </section>
+        </ScrollArea>
+      </Tabs>
+    </aside>
+  );
+}
+
+function TaskContextPanel(props: { task: Task }) {
+  const nextAction = getLatestTaskNextAction(props.task);
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium">Current notes</h3>
+        <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+          {props.task.description.trim() || "No notes saved."}
+        </p>
+      </section>
+      {nextAction && (
+        <>
+          <Separator />
+          <section className="flex flex-col gap-2">
+            <h3 className="text-sm font-medium">Latest next action</h3>
+            <p className="break-words text-sm text-muted-foreground">{nextAction}</p>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TaskRunsPanel(props: { task: Task }) {
+  const executions = getTaskExecutionHistory(props.task);
+  const latestNeedsLogOpen = [...executions]
+    .reverse()
+    .find((execution) => execution.status === "running" || execution.status === "failed");
+  const [expandedExecutionId, setExpandedExecutionId] = useState<string | null>(
+    latestNeedsLogOpen?.id ?? null,
+  );
+
+  useEffect(() => {
+    if (latestNeedsLogOpen) {
+      setExpandedExecutionId(latestNeedsLogOpen.id);
+    }
+  }, [latestNeedsLogOpen?.id]);
+
+  if (executions.length === 0) {
+    return (
+      <Empty className="min-h-40 border">
+        <EmptyMedia variant="icon">
+          <Clock3 />
+        </EmptyMedia>
+        <EmptyHeader>
+          <EmptyTitle>No runs yet</EmptyTitle>
+          <EmptyDescription>Task work will appear here after the first agent run.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <ItemGroup>
+      {executions.map((execution, index) => (
+        <Item variant="outline" className="items-start" key={execution.id}>
+          <ItemMedia variant="icon">{executionStatusIcon(execution)}</ItemMedia>
+          <ItemContent className="min-w-0">
+            <ItemTitle>
+              Run {index + 1}: {formatExecutionStatus(execution)}
+            </ItemTitle>
+            <ItemDescription className="line-clamp-none">
+              {formatExecutionWindow(execution)} · {formatProvider(execution.provider)}
+              {execution.model ? ` · ${execution.model}` : ""}
+            </ItemDescription>
+            <ExecutionOutput
+              execution={execution}
+              expanded={expandedExecutionId === execution.id}
+              onExpandedChange={(expanded) => setExpandedExecutionId(expanded ? execution.id : null)}
+            />
+          </ItemContent>
+        </Item>
+      ))}
+    </ItemGroup>
+  );
+}
+
+function TaskArtifactsPanel(props: { task: Task }) {
+  const artifacts = getTaskExecutionHistory(props.task).flatMap((execution) => execution.artifacts);
+  if (artifacts.length === 0) {
+    return (
+      <Empty className="min-h-40 border">
+        <EmptyMedia variant="icon">
+          <FileText />
+        </EmptyMedia>
+        <EmptyHeader>
+          <EmptyTitle>No artifacts</EmptyTitle>
+          <EmptyDescription>Links and evidence from task runs will appear here.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+  return (
+    <ItemGroup>
+      {artifacts.map((artifact) => (
+        <ArtifactRow artifact={artifact} key={artifact.id} />
+      ))}
+    </ItemGroup>
+  );
+}
+
+function TaskStateBadge(props: { task: Task }) {
+  const execution = props.task.execution;
+  if (execution?.status === "running" || execution?.status === "queued") {
+    return (
+      <Badge variant="secondary">
+        {executionStatusIcon(execution)}
+        {execution.status === "queued" ? "Queued" : "Running now"}
+      </Badge>
+    );
+  }
+  if (execution?.status === "failed" || props.task.status === "needs_attention") {
+    return (
+      <Badge variant="destructive">
+        <AlertTriangle data-icon="inline-start" />
+        Needs attention
+      </Badge>
+    );
+  }
+  if (execution?.status === "succeeded" || props.task.status === "done") {
+    return (
+      <Badge variant="secondary">
+        <CheckCircle2 data-icon="inline-start" />
+        Done
+      </Badge>
+    );
+  }
+  return <Badge variant="outline">{COLUMN_LABELS[props.task.status]}</Badge>;
+}
+
+function formatTaskSurfaceState(task: Task) {
+  if (task.execution?.status === "running" || task.execution?.status === "queued") {
+    return "Running now";
+  }
+  if (task.execution?.status === "failed" || task.status === "needs_attention") {
+    return "Needs attention";
+  }
+  if (task.execution?.status === "succeeded" || task.status === "done") {
+    return "Completed";
+  }
+  return "Task conversation";
+}
+
+function buildTaskThreadMessages(
+  task: Task,
+  pendingFollowUps: PendingFollowUp[],
+): TaskThreadMessage[] {
+  const messages: TaskThreadMessage[] = [];
+  const originalRequest = formatInitialTaskRequest(task);
+  if (originalRequest) {
+    messages.push({
+      type: "user_request",
+      id: `${task.id}-initial-request`,
+      content: originalRequest,
+      createdAt: task.createdAt,
+      label: "Original request",
+    });
+  }
+
+  const executions = getTaskExecutionHistory(task);
+  executions.forEach((execution, index) => {
+    const isLatestExecution = execution === task.execution;
+    const requestPrompt = displayExecutionRequestPrompt(execution);
+    if (requestPrompt) {
+      messages.push({
+        type: "user_request",
+        id: `${execution.id}-request`,
+        content: requestPrompt,
+        createdAt: execution.createdAt,
+        label: execution.requestKind === "follow_up" ? "Follow-up" : "Request",
+      });
+    }
+    if (execution.output.trim() || (isLatestExecution && isExecutionActive(execution)) || execution.error) {
+      messages.push({
+        type: "agent_result",
+        id: `${execution.id}-result`,
+        execution,
+        runIndex: index,
+      });
+    }
+    if (isLatestExecution) {
+      const nextAction = extractExecutionNextAction(execution);
+      if (nextAction) {
+        messages.push({
+          type: "next_action",
+          id: `${execution.id}-next-action`,
+          execution,
+          content: nextAction,
+        });
+      }
+    }
+    if (execution.artifacts.length > 0) {
+      messages.push({
+        type: "artifact_group",
+        id: `${execution.id}-artifacts`,
+        execution,
+      });
+    }
+  });
+
+  pendingFollowUps.forEach((entry) => {
+    messages.push({
+      type: "user_request",
+      id: entry.id,
+      content: entry.content,
+      createdAt: entry.createdAt,
+      label: "Follow-up",
+      pending: entry.status,
+      prompt: entry.prompt,
+    });
+  });
+
+  return messages;
+}
+
+function formatInitialTaskRequest(task: Task) {
+  const title = task.title.trim();
+  const notes = task.description.trim();
+  if (!title && !notes) {
+    return "";
+  }
+  return [title, notes].filter(Boolean).join("\n\n");
+}
+
+function displayExecutionRequestPrompt(execution: TaskExecution) {
+  const prompt = execution.requestPrompt?.trim() ?? "";
+  if (!prompt || execution.requestKind === "initial") {
+    return "";
+  }
+  return normalizeDisplayedPrompt(prompt);
+}
+
+function displayExecutionOutput(execution: TaskExecution) {
+  const withoutTechnicalLog = stripMarkdownSection(
+    execution.output,
+    /^#{2,6}\s+Recent agent log\s*$/i,
+  );
+  if (execution.status !== "failed") {
+    return withoutTechnicalLog;
+  }
+  return stripMarkdownSection(
+    withoutTechnicalLog,
+    /^#{2,6}\s+Next assignee step\s*$/i,
+  );
+}
+
+function stripMarkdownSection(output: string, headingPattern: RegExp) {
+  const lines = output.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => headingPattern.test(line.trim()));
+  if (headingIndex === -1) {
+    return output;
+  }
+  const nextHeadingIndex = lines.findIndex(
+    (line, index) => index > headingIndex && /^#{2,6}\s+\S/.test(line.trim()),
+  );
+  const visibleLines =
+    nextHeadingIndex === -1
+      ? lines.slice(0, headingIndex)
+      : [...lines.slice(0, headingIndex), ...lines.slice(nextHeadingIndex)];
+  return visibleLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function normalizeDisplayedPrompt(prompt: string) {
+  const nextActionMatch = prompt.match(/## Next action to complete\s+([\s\S]+)$/i);
+  if (nextActionMatch?.[1]) {
+    return `Run next action: ${normalizeNextActionLine(nextActionMatch[1]) ?? nextActionMatch[1].trim()}`;
+  }
+  return prompt;
+}
+
+function getTaskExecutionHistory(task: Task): TaskExecution[] {
+  const previous = task.execution?.previousExecutions ?? [];
+  return task.execution ? [...previous, task.execution] : previous;
+}
+
+function isTaskExecutionActive(execution: TaskExecution | null | undefined) {
+  return execution ? isExecutionActive(execution) : false;
+}
+
+function isExecutionActive(execution: TaskExecution) {
+  return execution.status === "queued" || execution.status === "running";
+}
+
+function composerPlaceholder(task: Task) {
+  const execution = task.execution;
+  if (execution?.status === "running" || execution?.status === "queued") {
+    return "Add context or queue a follow-up...";
+  }
+  if (execution?.status === "failed" || task.status === "needs_attention") {
+    return "Tell the agent how to recover...";
+  }
+  if (execution?.status === "succeeded" || task.status === "done") {
+    return "Ask a follow-up or request a change...";
+  }
+  return "Ask the agent to work on this task...";
+}
+
+function formatFocusAreaLabel(focusAreaId: string, focusAreas: FocusArea[]) {
+  if (focusAreaId === NO_FOCUS_AREA) {
+    return "No focus area";
+  }
+  return focusAreas.find((area) => area.id === focusAreaId)?.label ?? "Unknown focus area";
+}
+
+function FocusAreaOption(props: { area: FocusArea }) {
+  const style = getFocusAreaStyle(props.area.color);
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2">
+      <span
+        aria-hidden="true"
+        className="size-2.5 shrink-0 rounded-full"
+        style={{ backgroundColor: style.accent }}
+      />
+      <span className="truncate">{props.area.label}</span>
+    </span>
   );
 }
 
@@ -673,52 +1908,18 @@ function executionTerminalLines(execution: TaskExecution): string[] {
   return lines.length > 0 ? lines : ["No output yet."];
 }
 
-function ExecutionResult(props: { execution: TaskExecution }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Result</h3>
-      {props.execution.output.trim() ? (
-        <MarkdownMessage>{props.execution.output}</MarkdownMessage>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          {props.execution.status === "queued" || props.execution.status === "running"
-            ? "No final result yet."
-            : "No result saved."}
-        </p>
-      )}
-    </section>
-  );
-}
-
-function PreviousExecutionResults(props: { executions: TaskExecution[] }) {
-  const visibleExecutions = props.executions.filter((execution) => execution.output.trim());
-  if (visibleExecutions.length === 0) {
-    return null;
-  }
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Previous results</h3>
-      <ScrollArea className="max-h-80 max-w-full overflow-hidden pr-3">
-        <ItemGroup>
-          {visibleExecutions.map((execution) => (
-            <Item variant="muted" size="sm" className="items-start" key={execution.id}>
-              <ItemMedia variant="icon">
-                {executionStatusIcon(execution)}
-              </ItemMedia>
-              <ItemContent className="min-w-0 overflow-hidden">
-                <ItemTitle>{formatExecutionWindow(execution)}</ItemTitle>
-                <MarkdownMessage>{execution.output}</MarkdownMessage>
-              </ItemContent>
-            </Item>
-          ))}
-        </ItemGroup>
-      </ScrollArea>
-    </section>
-  );
-}
-
 function extractExecutionNextAction(execution: TaskExecution) {
   return extractNextAction(execution.output);
+}
+
+function getLatestTaskNextAction(task: Task) {
+  if (task.execution) {
+    const executionNextAction = extractExecutionNextAction(task.execution);
+    if (executionNextAction) {
+      return executionNextAction;
+    }
+  }
+  return extractNextAction(task.description);
 }
 
 function extractNextAction(output: string) {
@@ -734,7 +1935,7 @@ function extractNextAction(output: string) {
 
   for (const line of lines) {
     const inlineMatch = line.match(
-      /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:next actions?|next steps?|what(?:'s| is) next)\s*(?:\*\*)?\s*[:：-]\s*(.+)$/i,
+      /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:next actions?|next steps?|next assignee step|what(?:'s| is) next)\s*(?:\*\*)?\s*[:：-]\s*(.+)$/i,
     );
     if (inlineMatch?.[1]) {
       return normalizeNextActionLine(inlineMatch[1]);
@@ -745,7 +1946,15 @@ function extractNextAction(output: string) {
 }
 
 function isNextActionHeading(line: string) {
-  return /^#{1,6}\s*(?:next actions?|next steps?|what(?:'s| is) next)\b/i.test(line.trim());
+  const trimmed = line.trim();
+  return (
+    /^#{1,6}\s*(?:next actions?|next steps?|next assignee step|what(?:'s| is) next)\b/i.test(
+      trimmed,
+    ) ||
+    /^(?:[-*]\s*)?(?:\*\*)?\s*(?:next actions?|next steps?|next assignee step|what(?:'s| is) next)\s*(?:\*\*)?\s*[:：]?\s*$/i.test(
+      trimmed,
+    )
+  );
 }
 
 function firstNextActionLine(lines: string[]) {

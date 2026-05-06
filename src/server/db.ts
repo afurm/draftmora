@@ -29,6 +29,7 @@ import {
   type TaskExecution,
   type TaskExecutionArtifact,
   type TaskExecutionEvent,
+  type TaskExecutionRequestKind,
   type TaskExecutionStatus,
   type TaskStatus,
   type TaskUpdateInput,
@@ -55,6 +56,8 @@ type TaskExecutionRow = {
   status: string;
   provider: string;
   model: string | null;
+  request_kind: string | null;
+  request_prompt: string | null;
   started_at: string | null;
   ended_at: string | null;
   progress_summary: string;
@@ -106,6 +109,8 @@ type TaskExecutionCreateInput = {
   taskId: string;
   provider: ProviderId | "local";
   model?: string | null;
+  requestKind?: TaskExecutionRequestKind;
+  requestPrompt?: string;
   status?: TaskExecutionStatus;
   progressSummary?: string;
   output?: string;
@@ -188,6 +193,12 @@ const TASK_EXECUTION_STATUS_VALUES = new Set<string>([
   "running",
   "succeeded",
   "failed",
+]);
+const TASK_EXECUTION_REQUEST_KIND_VALUES = new Set<string>([
+  "initial",
+  "follow_up",
+  "rerun",
+  "manual",
 ]);
 
 export class BoardStore {
@@ -335,6 +346,8 @@ export class BoardStore {
       status: input.status ?? "queued",
       provider: input.provider,
       model: input.model ?? null,
+      requestKind: normalizeTaskExecutionRequestKind(input.requestKind),
+      requestPrompt: input.requestPrompt?.trim() ?? "",
       startedAt: input.startedAt ?? null,
       endedAt: input.endedAt ?? null,
       progressSummary: input.progressSummary ?? "Request queued.",
@@ -348,9 +361,10 @@ export class BoardStore {
     this.db
       .prepare(
         `INSERT INTO task_executions
-          (id, task_id, agent_run_id, status, provider, model, started_at, ended_at,
+          (id, task_id, agent_run_id, status, provider, model, request_kind,
+           request_prompt, started_at, ended_at,
            progress_summary, output, error, artifacts, events, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         execution.id,
@@ -359,6 +373,8 @@ export class BoardStore {
         execution.status,
         execution.provider,
         execution.model,
+        execution.requestKind,
+        execution.requestPrompt,
         execution.startedAt,
         execution.endedAt,
         execution.progressSummary,
@@ -414,7 +430,8 @@ export class BoardStore {
     const row = this.db
       .prepare(
         `SELECT id, task_id, agent_run_id, status, provider, model, started_at, ended_at,
-                progress_summary, output, error, artifacts, events, created_at, updated_at
+                request_kind, request_prompt, progress_summary, output, error, artifacts,
+                events, created_at, updated_at
          FROM task_executions
          WHERE id = ?`,
       )
@@ -426,7 +443,8 @@ export class BoardStore {
     const row = this.db
       .prepare(
         `SELECT id, task_id, agent_run_id, status, provider, model, started_at, ended_at,
-                progress_summary, output, error, artifacts, events, created_at, updated_at
+                request_kind, request_prompt, progress_summary, output, error, artifacts,
+                events, created_at, updated_at
          FROM task_executions
          WHERE task_id = ?
          ORDER BY created_at DESC, rowid DESC
@@ -440,7 +458,8 @@ export class BoardStore {
     return this.db
       .prepare(
         `SELECT id, task_id, agent_run_id, status, provider, model, started_at, ended_at,
-                progress_summary, output, error, artifacts, events, created_at, updated_at
+                request_kind, request_prompt, progress_summary, output, error, artifacts,
+                events, created_at, updated_at
          FROM task_executions
          WHERE task_id = ?
          ORDER BY created_at ASC, rowid ASC`,
@@ -673,6 +692,8 @@ export class BoardStore {
         status TEXT NOT NULL,
         provider TEXT NOT NULL,
         model TEXT,
+        request_kind TEXT NOT NULL DEFAULT 'initial',
+        request_prompt TEXT NOT NULL DEFAULT '',
         started_at TEXT,
         ended_at TEXT,
         progress_summary TEXT NOT NULL DEFAULT '',
@@ -720,6 +741,8 @@ export class BoardStore {
     this.ensureColumn("tasks", "provider_source", "TEXT");
     this.ensureColumn("tasks", "created_at", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("tasks", "updated_at", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("task_executions", "request_kind", "TEXT NOT NULL DEFAULT 'initial'");
+    this.ensureColumn("task_executions", "request_prompt", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("assistant_chat_messages", "conversation_id", "TEXT");
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_assistant_chat_messages_conversation_created_at
@@ -1031,6 +1054,8 @@ export class BoardStore {
       status: normalizeTaskExecutionStatus(row.status),
       provider: normalizeProviderSource(row.provider) ?? "local",
       model: row.model,
+      requestKind: normalizeTaskExecutionRequestKind(row.request_kind),
+      requestPrompt: row.request_prompt ?? "",
       startedAt: row.started_at,
       endedAt: row.ended_at,
       progressSummary: row.progress_summary,
@@ -1128,6 +1153,14 @@ function normalizeTaskExecutionStatus(value: string | null | undefined): TaskExe
   return TASK_EXECUTION_STATUS_VALUES.has(value ?? "")
     ? (value as TaskExecutionStatus)
     : "queued";
+}
+
+function normalizeTaskExecutionRequestKind(
+  value: string | null | undefined,
+): TaskExecutionRequestKind {
+  return TASK_EXECUTION_REQUEST_KIND_VALUES.has(value ?? "")
+    ? (value as TaskExecutionRequestKind)
+    : "initial";
 }
 
 function normalizeAssistantChatRole(value: string | null | undefined): AssistantChatRole {

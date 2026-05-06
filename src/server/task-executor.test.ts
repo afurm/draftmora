@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "../shared/types";
+import { resolveArtifactFilePath, resolveArtifactRevealCommand } from "./artifact-file-opener";
+import {
+  extractLocalToolResultArtifacts,
+  extractTaskExecutionArtifacts,
+} from "./task-artifacts";
 import { buildBoardTaskContext, buildTaskSystemPrompt } from "./task-executor";
 
 describe("task executor board context", () => {
@@ -46,6 +51,96 @@ describe("task executor board context", () => {
     expect(prompt).toContain("separate memory-review pass");
     expect(prompt).toContain("do not claim anything was saved");
     expect(prompt).not.toContain("state that it was saved to durable memory");
+  });
+});
+
+describe("task execution artifacts", () => {
+  it("extracts useful links and files from assistant output", () => {
+    const artifacts = extractTaskExecutionArtifacts(
+      [
+        "Created [Tracking ticket](https://linear.app/acme/issue/ENG-42/fix-login).",
+        "Duplicate: https://linear.app/acme/issue/ENG-42/fix-login",
+        "Wrote `PR_DESCRIPTION.md`.",
+        "MEDIA:/tmp/screenshot.png",
+      ].join("\n"),
+    );
+
+    expect(artifacts).toEqual([
+      expect.objectContaining({
+        type: "link",
+        title: "Tracking ticket",
+        url: "https://linear.app/acme/issue/ENG-42/fix-login",
+      }),
+      expect.objectContaining({
+        type: "output",
+        title: "File: PR_DESCRIPTION.md",
+        content: "PR_DESCRIPTION.md",
+      }),
+      expect.objectContaining({
+        type: "output",
+        title: "File: screenshot.png",
+        content: "/tmp/screenshot.png",
+        url: "file:///tmp/screenshot.png",
+      }),
+    ]);
+  });
+
+  it("extracts OpenClaw-style artifacts from local tool results", () => {
+    expect(
+      extractLocalToolResultArtifacts(
+        "write_file",
+        JSON.stringify({ ok: true, path: "/tmp/draftmora-report.md" }),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: "output",
+        title: "File: draftmora-report.md",
+        content: "/tmp/draftmora-report.md",
+        url: "file:///tmp/draftmora-report.md",
+      }),
+    ]);
+
+    expect(
+      extractLocalToolResultArtifacts(
+        "run_shell",
+        JSON.stringify({
+          ok: true,
+          stdout:
+            "https://forge.example.test/team/project/issues/25\nhttps://forge.example.test/team/project/issues/25",
+          stderr: "",
+        }),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: "link",
+        title: "Issue #25",
+        url: "https://forge.example.test/team/project/issues/25",
+      }),
+    ]);
+  });
+});
+
+describe("artifact file opener", () => {
+  it("resolves local file artifacts and reveal commands without shell interpolation", () => {
+    expect(
+      resolveArtifactFilePath({
+        id: "artifact-1",
+        type: "output",
+        title: "File: report.md",
+        content: "/tmp/report.md",
+        url: "file:///tmp/report.md",
+        createdAt: "2026-05-06T00:00:00.000Z",
+      }),
+    ).toBe("/tmp/report.md");
+
+    expect(resolveArtifactRevealCommand("/tmp/report $(touch nope).md", "darwin")).toEqual({
+      command: "open",
+      args: ["-R", "/tmp/report $(touch nope).md"],
+    });
+    expect(resolveArtifactRevealCommand("/tmp/report.md", "linux")).toEqual({
+      command: "xdg-open",
+      args: ["/tmp"],
+    });
   });
 });
 

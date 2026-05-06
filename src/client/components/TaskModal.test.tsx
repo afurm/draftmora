@@ -8,10 +8,22 @@ import { TaskModal } from "./TaskModal";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
+const apiMocks = vi.hoisted(() => ({
+  openTaskArtifact: vi.fn(),
+}));
+
+vi.mock("../api", () => ({
+  api: {
+    openTaskArtifact: apiMocks.openTaskArtifact,
+  },
+}));
+
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  apiMocks.openTaskArtifact.mockReset();
+  apiMocks.openTaskArtifact.mockResolvedValue({ ok: true, path: "/tmp/task-report.md" });
   try {
     window.localStorage.clear();
   } catch {
@@ -88,6 +100,71 @@ describe("TaskModal", () => {
     expect(originalRequest?.querySelector('[data-slot="item-content"]')?.className).toContain(
       "text-left",
     );
+  });
+
+  it("labels the inspector tab as Artifacts and renders useful artifacts as clickable rows", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "succeeded",
+        output: "Created useful evidence.",
+        artifacts: [
+          {
+            id: "artifact-issue",
+            type: "link",
+            title: "GitHub issue #25",
+            content: "github.com",
+            url: "https://github.com/afurm/draftmora/issues/25",
+            createdAt: "2026-05-03T07:01:00.000Z",
+          },
+          {
+            id: "artifact-issue-duplicate",
+            type: "link",
+            title: "GitHub issue #25",
+            content: "github.com",
+            url: "https://github.com/afurm/draftmora/issues/25",
+            createdAt: "2026-05-03T07:01:01.000Z",
+          },
+          {
+            id: "artifact-file",
+            type: "output",
+            title: "File: task-report.md",
+            content: "/tmp/task-report.md",
+            url: "file:///tmp/task-report.md",
+            createdAt: "2026-05-03T07:01:02.000Z",
+          },
+        ],
+      }),
+    });
+
+    await clickButtonByLabel("Open Artifacts");
+
+    expect(document.body.textContent).toContain("Artifacts");
+    expect(document.body.textContent).not.toContain("Files");
+    expect(document.body.textContent).toContain("GitHub issue #25");
+    expect(document.body.textContent).toContain("File: task-report.md");
+
+    const inspector = document.body.querySelector<HTMLElement>('aside[aria-label="Task details"]');
+    expect(inspector).toBeTruthy();
+    const issueLinks = inspector!.querySelectorAll<HTMLAnchorElement>(
+      'a[href="https://github.com/afurm/draftmora/issues/25"]',
+    );
+    expect(issueLinks).toHaveLength(1);
+    expect(issueLinks[0]?.target).toBe("_blank");
+    expect(issueLinks[0]?.rel).toBe("noreferrer");
+
+    const fileLink = inspector!.querySelector<HTMLAnchorElement>('a[href="file:///tmp/task-report.md"]');
+    expect(fileLink).toBeNull();
+
+    const fileButton = inspector!.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reveal File: task-report.md"]',
+    );
+    expect(fileButton).toBeTruthy();
+    await act(async () => {
+      fileButton!.click();
+      await Promise.resolve();
+    });
+    expect(apiMocks.openTaskArtifact).toHaveBeenCalledWith("task-1", "artifact-file");
   });
 
   it("shows running AI work above locked details", async () => {

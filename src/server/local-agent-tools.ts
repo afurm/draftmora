@@ -16,6 +16,8 @@ import {
   String as TypeString,
 } from "typebox";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { TaskExecutionArtifact } from "../shared/types";
+import { extractLocalToolResultArtifacts } from "./task-artifacts";
 
 const DEFAULT_OUTPUT_LIMIT = 30_000;
 const MAX_OUTPUT_LIMIT = 120_000;
@@ -81,6 +83,7 @@ export const LOCAL_AGENT_TOOLS: Tool[] = [
 export type ExecutedLocalTool = {
   message: ToolResultMessage;
   summary: string;
+  artifacts: TaskExecutionArtifact[];
 };
 
 export async function executeLocalToolCall(
@@ -100,6 +103,7 @@ export async function executeLocalToolCall(
     return {
       message: buildToolResult(call, content, isError),
       summary: summarizeToolCall(call, content, Date.now() - started),
+      artifacts: isError ? [] : extractLocalToolResultArtifacts(call.name, content),
     };
   } catch (err) {
     if (isToolRunCancellationError(err)) {
@@ -110,6 +114,7 @@ export async function executeLocalToolCall(
     return {
       message: buildToolResult(call, content, true),
       summary: `${call.name} failed: ${message}`,
+      artifacts: [],
     };
   }
 }

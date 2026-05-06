@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { BoardStore } from "./db";
 import { buildServer } from "./routes";
@@ -171,6 +172,21 @@ class StubProviderRouter extends ProviderRouter {
             }),
       };
     }
+    if (prompt.includes("Artifact-producing write")) {
+      const hasToolResult = request.context.messages.some(
+        (message) => message.role === "toolResult" && message.toolName === "write_file",
+      );
+      return {
+        content: hasToolResult ? "Created the task report." : "",
+        raw: hasToolResult
+          ? assistantMessage("Created the task report.")
+          : assistantMessageWithToolCall("write_file", {
+              path: "artifacts/task-report.md",
+              cwd: this.toolCwd,
+              content: "# Task report\n",
+            }),
+      };
+    }
     const followUp = prompt.includes("Follow-up request:");
     return {
       content: followUp ? "Follow-up result from stub provider." : "Initial result from stub provider.",
@@ -252,7 +268,10 @@ function assistantMessageWithToolCall(
   };
 }
 
-function createTestApp(options: { runTaskExecutionsInline?: boolean } = {}) {
+function createTestApp(options: {
+  runTaskExecutionsInline?: boolean;
+  artifactFileOpener?: (filePath: string) => Promise<{ ok: true; path: string }>;
+} = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "routes-"));
   tempDirs.push(dir);
   const store = new BoardStore(path.join(dir, "board.db"));
@@ -262,6 +281,7 @@ function createTestApp(options: { runTaskExecutionsInline?: boolean } = {}) {
     providerRouter,
     runTaskExecutionsInline: options.runTaskExecutionsInline,
     memoryRoot: dir,
+    artifactFileOpener: options.artifactFileOpener,
   });
   return { app, store, dir, providerRouter };
 }
@@ -406,6 +426,71 @@ describe("routes", () => {
         event.message.includes("read_file (marker.txt) completed"),
       ),
     ).toBe(true);
+    await app.close();
+    store.close();
+  });
+
+  it("records artifacts produced by local tool results", async () => {
+    const { app, store, dir } = createTestApp({
+      runTaskExecutionsInline: true,
+    });
+    const artifactPath = path.join(dir, "artifacts/task-report.md");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Artifact-producing write",
+        status: "in_progress",
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json();
+    expect(readFileSync(artifactPath, "utf8")).toBe("# Task report\n");
+    expect(body.task.execution.output).toBe("Created the task report.");
+    expect(body.task.execution.artifacts).toEqual([
+      expect.objectContaining({
+        type: "output",
+        title: "File: task-report.md",
+        content: artifactPath,
+        url: pathToFileURL(artifactPath).href,
+      }),
+    ]);
+    await app.close();
+    store.close();
+  });
+
+  it("reveals recorded local artifact files through the backend", async () => {
+    const openArtifactFile = vi.fn(async (filePath: string) => ({
+      ok: true as const,
+      path: filePath,
+    }));
+    const { app, store, dir } = createTestApp({
+      runTaskExecutionsInline: true,
+      artifactFileOpener: openArtifactFile,
+    });
+    const artifactPath = path.join(dir, "artifacts/task-report.md");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Artifact-producing write",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task as Task;
+    const artifact = task.execution?.artifacts[0];
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/artifacts/${artifact?.id}/open`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, path: artifactPath });
+    expect(openArtifactFile).toHaveBeenCalledWith(artifactPath);
     await app.close();
     store.close();
   });

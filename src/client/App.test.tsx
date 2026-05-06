@@ -13,6 +13,7 @@ vi.mock("./api", () => ({
     createTask: vi.fn(),
     updateTask: vi.fn(),
     createTaskFollowUp: vi.fn(),
+    forceTaskFollowUp: vi.fn(),
     deleteTask: vi.fn(),
     settings: vi.fn(),
     patchSettings: vi.fn(),

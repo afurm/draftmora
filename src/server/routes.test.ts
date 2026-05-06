@@ -724,6 +724,88 @@ describe("routes", () => {
     store.close();
   });
 
+  it("forces a queued follow-up without waiting behind the active task run", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "routes-force-follow-up-"));
+    tempDirs.push(dir);
+    const store = new BoardStore(path.join(dir, "board.db"));
+    const providerRouter = new BlockingTaskProviderRouter(store);
+    const app = buildServer({
+      store,
+      providerRouter,
+      memoryRoot: dir,
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Correct active work",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task as Task;
+    await waitUntil(() => providerRouter.toolRequests.length === 1);
+
+    const queued = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up`,
+      payload: { prompt: "Use this correction immediately." },
+    });
+    expect(queued.statusCode).toBe(201);
+    expect(queued.json().task.execution.status).toBe("queued");
+    const queuedExecutionId = queued.json().task.execution.id;
+
+    const forced = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up/${queuedExecutionId}/force`,
+    });
+
+    expect(forced.statusCode).toBe(200);
+    expect(forced.json().task.execution.requestPrompt).toBe("Use this correction immediately.");
+    expect(forced.json().task.execution.status).toBe("queued");
+    expect(
+      forced
+        .json()
+        .task.execution.events.map((event: { message: string }) => event.message),
+    ).toContain("Forced follow-up queued.");
+    expect(providerRouter.toolRequestSignals[0]?.aborted).toBe(true);
+    await waitUntil(() => providerRouter.toolRequests.length === 2);
+    expect(store.getTaskExecution(queuedExecutionId)?.status).toBe("running");
+
+    const forcedPrompt = providerRouter.toolRequests[1]?.context.messages.find(
+      (message) => message.role === "user",
+    );
+    const forcedPromptContent =
+      forcedPrompt?.role === "user" && typeof forcedPrompt.content === "string"
+        ? forcedPrompt.content
+        : "";
+    expect(forcedPromptContent).toContain("Follow-up request: Use this correction immediately.");
+
+    providerRouter.resolveNextToolRequest("Late result that should remain cancelled.");
+    await flushQueuedPromises();
+    expect(store.getTask(task.id)?.status).toBe("in_progress");
+    expect(providerRouter.toolRequests).toHaveLength(2);
+
+    providerRouter.resolveNextToolRequest("Forced follow-up result.");
+    await waitUntil(() => store.getTask(task.id)?.execution?.output === "Forced follow-up result.");
+
+    const detailed = await app.inject({
+      method: "GET",
+      url: `/api/tasks/${task.id}`,
+    });
+    expect(detailed.json().task.status).toBe("done");
+    expect(detailed.json().task.execution.status).toBe("succeeded");
+    expect(detailed.json().task.execution.id).toBe(queuedExecutionId);
+    expect(detailed.json().task.execution.previousExecutions).toHaveLength(1);
+    expect(
+      detailed
+        .json()
+        .task.execution.previousExecutions.map((execution: { status: string }) => execution.status),
+    ).toEqual(["cancelled"]);
+    await app.close();
+    store.close();
+  });
+
   it("skips queued follow-up work when the task is deleted before it starts", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "routes-queue-delete-"));
     tempDirs.push(dir);

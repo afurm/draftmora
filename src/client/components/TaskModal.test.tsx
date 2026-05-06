@@ -142,6 +142,81 @@ describe("TaskModal", () => {
     expect(document.body.textContent).toContain("Run cancelled.");
   });
 
+  it("offers force request on a queued follow-up while active AI work is running", async () => {
+    const onForceFollowUp = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          id: "execution-follow-up",
+          status: "queued",
+          endedAt: null,
+          requestKind: "follow_up",
+          requestPrompt: "Stop and use this correction.",
+          progressSummary: "Follow-up queued.",
+          previousExecutions: [
+            execution({
+              id: "execution-active",
+              status: "running",
+              endedAt: null,
+              progressSummary: "Preparing the task context.",
+            }),
+          ],
+        }),
+      },
+      { onForceFollowUp },
+    );
+
+    expect(findButton("Force request")).toBeTruthy();
+    expect(document.body.textContent).toContain("Stop and use this correction.");
+    await clickButton("Force request");
+    await flushReactPromises();
+
+    expect(onForceFollowUp).toHaveBeenCalledWith("execution-follow-up");
+    expect(document.body.textContent).toContain("Forced request queued.");
+  });
+
+  it("keeps queued follow-ups forceable when force fails", async () => {
+    const onForceFollowUp = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Network offline"))
+      .mockResolvedValueOnce(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          id: "execution-follow-up",
+          status: "queued",
+          endedAt: null,
+          requestKind: "follow_up",
+          requestPrompt: "Force with retry context.",
+          progressSummary: "Follow-up queued.",
+          previousExecutions: [
+            execution({
+              id: "execution-active",
+              status: "running",
+              endedAt: null,
+              progressSummary: "Preparing the task context.",
+            }),
+          ],
+        }),
+      },
+      { onForceFollowUp },
+    );
+
+    await clickButton("Force request");
+    await flushReactPromises();
+
+    expect(document.body.textContent).toContain("Network offline");
+    expect(findButton("Force request")).toBeTruthy();
+
+    await clickButton("Force request");
+    await flushReactPromises();
+
+    expect(onForceFollowUp).toHaveBeenNthCalledWith(2, "execution-follow-up");
+    expect(document.body.textContent).toContain("Forced request queued.");
+  });
+
   it("shows cancelled runs as terminal task history", async () => {
     await renderTaskModal({
       ...task(),
@@ -605,6 +680,12 @@ async function changeField(selector: string, value: string) {
   await act(async () => {
     valueSetter?.call(field, value);
     field!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function flushReactPromises() {
+  await act(async () => {
+    await Promise.resolve();
   });
 }
 

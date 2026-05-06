@@ -77,6 +77,12 @@ export type TaskCreateInput = {
 
 export type TaskUpdateInput = Partial<TaskCreateInput>;
 
+export type TaskFollowUpMode = "queue" | "interrupt";
+export type TaskFollowUpInput = {
+  prompt: string;
+  mode?: TaskFollowUpMode;
+};
+
 export type TaskExecutionStatus =
   | "queued"
   | "running"

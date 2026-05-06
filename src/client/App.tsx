@@ -18,6 +18,7 @@ import type {
   ProviderStatus,
   Task,
   TaskCreateInput,
+  TaskFollowUpMode,
   TaskStatus,
 } from "../shared/types";
 import { COLUMN_LABELS, TASK_STATUSES } from "../shared/types";
@@ -288,14 +289,24 @@ export function App() {
     }
   }
 
-  async function askTaskFollowUp(taskId: string, prompt: string) {
-    const result = await api.createTaskFollowUp(taskId, prompt);
+  async function askTaskFollowUp(
+    taskId: string,
+    prompt: string,
+    mode: TaskFollowUpMode = "queue",
+  ) {
+    const result = await api.createTaskFollowUp(taskId, prompt, mode);
     setTasks((current) => current.map((task) => (task.id === taskId ? result.task : task)));
     setEditingTask((current) => (current?.id === taskId ? result.task : current));
   }
 
   async function abortTaskRun(taskId: string) {
     const result = await api.abortTaskRun(taskId);
+    setTasks((current) => current.map((task) => (task.id === taskId ? result.task : task)));
+    setEditingTask((current) => (current?.id === taskId ? result.task : current));
+  }
+
+  async function forceTaskFollowUp(taskId: string, executionId: string) {
+    const result = await api.forceTaskFollowUp(taskId, executionId);
     setTasks((current) => current.map((task) => (task.id === taskId ? result.task : task)));
     setEditingTask((current) => (current?.id === taskId ? result.task : current));
   }
@@ -648,8 +659,17 @@ export function App() {
                 }
               }}
               onDelete={editingTask ? () => deleteTask(editingTask.id) : undefined}
-              onAskFollowUp={editingTask ? (prompt) => askTaskFollowUp(editingTask.id, prompt) : undefined}
+              onAskFollowUp={
+                editingTask
+                  ? (prompt, mode) => askTaskFollowUp(editingTask.id, prompt, mode)
+                  : undefined
+              }
               onAbortExecution={editingTask ? () => abortTaskRun(editingTask.id) : undefined}
+              onForceFollowUp={
+                editingTask
+                  ? (executionId) => forceTaskFollowUp(editingTask.id, executionId)
+                  : undefined
+              }
               onCreateDraft={editingTask ? createDraftTask : undefined}
               onSave={createOrUpdateTask}
             />

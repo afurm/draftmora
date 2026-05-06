@@ -35,6 +35,8 @@ export async function startTaskExecutionForTask(
   return startExecution({
     ...input,
     buildPrompt: (task) => input.prompt ?? buildTaskExecutionPrompt(task),
+    requestKind: "initial",
+    requestPrompt: (task) => input.prompt ?? formatTaskUserRequest(task),
     queuedMessage: "Request queued.",
   });
 }
@@ -45,6 +47,8 @@ export async function startTaskFollowUpExecutionForTask(
   return startExecution({
     ...input,
     buildPrompt: (task) => buildTaskFollowUpPrompt(task, input.followUp),
+    requestKind: "follow_up",
+    requestPrompt: () => input.followUp,
     queuedMessage: "Follow-up queued.",
   });
 }
@@ -52,6 +56,8 @@ export async function startTaskFollowUpExecutionForTask(
 async function startExecution(
   input: StartTaskExecutionInput & {
     buildPrompt: (task: Task) => string;
+    requestKind: "initial" | "follow_up" | "rerun" | "manual";
+    requestPrompt: (task: Task) => string;
     queuedMessage: string;
   },
 ): Promise<TaskExecution> {
@@ -64,6 +70,8 @@ async function startExecution(
     taskId: input.task.id,
     provider: input.provider,
     model: config.model,
+    requestKind: input.requestKind,
+    requestPrompt: input.requestPrompt(input.task),
     status: "queued",
     progressSummary: input.queuedMessage,
     events: [{ id: "", kind: "queued", message: input.queuedMessage, createdAt: "" }],
@@ -160,7 +168,6 @@ async function startExecution(
       const handoff = buildFailureHandoff({
         task: taskAtStart,
         failureMessage,
-        events,
       });
       input.store.updateTaskExecution(execution.id, {
         status: "failed",
@@ -257,21 +264,13 @@ async function completeTaskWithLocalTools(input: {
 function buildFailureHandoff(input: {
   task: Task;
   failureMessage: string;
-  events: TaskExecutionEvent[];
 }): string {
-  const recentEvents = input.events
-    .slice(-8)
-    .map((event) => `- ${event.kind}: ${event.message}`)
-    .join("\n");
   return [
     "## Failure handoff",
     "",
     `Task: ${input.task.title}`,
     `Status: needs_attention`,
     `Failure: ${input.failureMessage}`,
-    "",
-    "### Recent agent log",
-    recentEvents || "- No progress events were recorded.",
     "",
     "### Next assignee step",
     "Open this task, read the failed output above, address the concrete blocker using the task notes and board context, then move the task back to In Progress to rerun the agent.",
@@ -358,6 +357,10 @@ function buildTaskExecutionPrompt(task: Task): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatTaskUserRequest(task: Task): string {
+  return [task.title, task.description].map((value) => value.trim()).filter(Boolean).join("\n\n");
 }
 
 function buildTaskFollowUpPrompt(task: Task, prompt: string): string {

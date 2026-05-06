@@ -61,6 +61,7 @@ const TaskModal = lazy(() =>
 
 type View = "board" | "settings";
 type WorkspaceMode = "board" | "chat";
+type HistoryWriteMode = "push" | "replace";
 
 const VIEW_META: Record<View, { title: string; description: string }> = {
   board: {
@@ -72,6 +73,31 @@ const VIEW_META: Record<View, { title: string; description: string }> = {
     description: "Manage focus areas for your local board.",
   },
 };
+
+function readTaskIdFromUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return new URLSearchParams(window.location.search).get("task");
+}
+
+function writeTaskIdToUrl(taskId: string | null, mode: HistoryWriteMode = "push") {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (taskId) {
+    url.searchParams.set("task", taskId);
+  } else {
+    url.searchParams.delete("task");
+  }
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  if (current === next) {
+    return;
+  }
+  window.history[mode === "replace" ? "replaceState" : "pushState"]({}, "", next);
+}
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -86,6 +112,7 @@ export function App() {
   const transientProposedActionsRef = useRef<TransientProposedActionCache>(new Map());
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => readTaskIdFromUrl());
   const [creatingStatus, setCreatingStatus] = useState<TaskStatus | null>(null);
   const [loadingApp, setLoadingApp] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +143,47 @@ export function App() {
   useEffect(() => {
     void loadAppData();
   }, [loadAppData]);
+
+  useEffect(() => {
+    const syncSelectedTaskFromUrl = () => {
+      setSelectedTaskId(readTaskIdFromUrl());
+    };
+    window.addEventListener("popstate", syncSelectedTaskFromUrl);
+    return () => window.removeEventListener("popstate", syncSelectedTaskFromUrl);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setEditingTask(null);
+      return;
+    }
+    let cancelled = false;
+    setWorkspaceMode("board");
+    setView("board");
+    void api
+      .getTask(selectedTaskId)
+      .then((response) => {
+        if (!cancelled) {
+          setEditingTask(response.task);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        setEditingTask(null);
+        if (message === "Task not found") {
+          setSelectedTaskId(null);
+          writeTaskIdToUrl(null, "replace");
+        }
+        setError(message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTaskId]);
 
   useEffect(() => {
     const hasActiveExecution = tasks.some(
@@ -198,7 +266,7 @@ export function App() {
       setTasks((current) =>
         current.map((task) => (task.id === editingTask.id ? result.task : task)),
       );
-      setEditingTask(null);
+      setEditingTask(result.task);
       return;
     }
     const result = await api.createTask(input);
@@ -233,18 +301,25 @@ export function App() {
 
   function openTaskEditor(task: Task) {
     setEditingTask(task);
-    void api
-      .getTask(task.id)
-      .then((response) => {
-        setEditingTask((current) => (current?.id === task.id ? response.task : current));
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    setSelectedTaskId(task.id);
+    writeTaskIdToUrl(task.id);
+  }
+
+  function closeTaskEditor() {
+    setEditingTask(null);
+    setSelectedTaskId(null);
+    writeTaskIdToUrl(null);
   }
 
   async function deleteTask(id: string) {
+    const deletingOpenTask = selectedTaskId === id || editingTask?.id === id;
     await api.deleteTask(id);
     setTasks((current) => current.filter((task) => task.id !== id));
-    setEditingTask(null);
+    if (deletingOpenTask) {
+      setEditingTask(null);
+      setSelectedTaskId(null);
+      writeTaskIdToUrl(null, "replace");
+    }
   }
 
   async function applyProposedAction(action: AssistantProposedAction) {
@@ -560,8 +635,11 @@ export function App() {
               title={editingTask ? "Edit task" : `Add task to ${COLUMN_LABELS[creatingStatus!]}`}
               focusAreas={focusAreas}
               onClose={() => {
-                setEditingTask(null);
-                setCreatingStatus(null);
+                if (editingTask) {
+                  closeTaskEditor();
+                } else {
+                  setCreatingStatus(null);
+                }
               }}
               onDelete={editingTask ? () => deleteTask(editingTask.id) : undefined}
               onAskFollowUp={editingTask ? (prompt) => askTaskFollowUp(editingTask.id, prompt) : undefined}

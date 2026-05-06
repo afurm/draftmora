@@ -510,8 +510,12 @@ describe("routes", () => {
     const body = response.json();
     expect(body.task.status).toBe("done");
     expect(body.task.execution.status).toBe("succeeded");
+    expect(body.task.execution.requestKind).toBe("follow_up");
+    expect(body.task.execution.requestPrompt).toBe("Can you also list blockers?");
     expect(body.task.execution.output).toBe("Follow-up result from stub provider.");
     expect(body.task.execution.previousExecutions).toHaveLength(1);
+    expect(body.task.execution.previousExecutions[0].requestKind).toBe("initial");
+    expect(body.task.execution.previousExecutions[0].requestPrompt).toBe("Explain release risk");
     expect(body.task.execution.previousExecutions[0].output).toBe(
       "Initial result from stub provider.",
     );
@@ -600,6 +604,8 @@ describe("routes", () => {
 
     expect(followUp.statusCode).toBe(201);
     expect(followUp.json().task.execution.status).toBe("queued");
+    expect(followUp.json().task.execution.requestKind).toBe("follow_up");
+    expect(followUp.json().task.execution.requestPrompt).toBe("Can you also list blockers?");
     expect(followUp.json().task.execution.progressSummary).toBe("Follow-up queued.");
     expect(providerRouter.toolRequests).toHaveLength(1);
 
@@ -1209,6 +1215,7 @@ describe("routes", () => {
     expect(error).not.toContain("5-04");
     expect(response.json().task.execution.output).toContain("Failure handoff");
     expect(response.json().task.execution.output).toContain("Status: needs_attention");
+    expect(response.json().task.execution.output).not.toContain("Recent agent log");
     await app.close();
     store.close();
   });

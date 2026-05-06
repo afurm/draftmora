@@ -24,36 +24,68 @@ afterEach(() => {
 });
 
 describe("TaskModal", () => {
-  it("shows completed AI work as read-only chat with the work log", async () => {
+  it("shows completed AI work as a locked task conversation", async () => {
     await renderTaskModal({
       ...task(),
       execution: execution({
         status: "succeeded",
-        output: "**Lviv** is in western Ukraine.\n\n- It is close to Poland.",
+        output: [
+          "**Lviv** is in western Ukraine.",
+          "- It is close to Poland.",
+          "PR: https://github.com/afurm/draftmora/pull/13",
+          "```ts\nconst city = 'Lviv';\n```",
+          "| Check | State |\n| --- | --- |\n| CI | green |",
+        ].join("\n\n"),
       }),
     });
 
-    expect(document.body.textContent).toContain("Task chat");
-    expect(document.body.textContent).toContain("Info");
-    expect(document.body.textContent).toContain("Notes");
-    expect(document.body.textContent).toContain("Where is Lviv located?");
-    expect(document.body.textContent).toContain("Result");
-    expect(document.body.textContent).toContain("Technical details");
-    expect(document.body.textContent).toContain("Show log");
+    expect(document.body.textContent).toContain("Completed");
+    expect(document.body.textContent).toContain("Assistant");
+    expect(document.body.textContent).not.toContain("Agent result");
+    expect(document.body.textContent).not.toContain("Run 1: Done");
+    expect(document.body.textContent).not.toContain("Save details");
     expect(document.body.textContent).toContain("Lviv is in western Ukraine.");
     expect(document.body.textContent).not.toContain("**Lviv**");
     expect(document.body.querySelector("strong")?.textContent).toBe("Lviv");
     expect(document.body.querySelector("li")?.textContent).toBe("It is close to Poland.");
-    expect(document.body.textContent).toContain("Ask a follow-up");
+    const link = document.body.querySelector<HTMLAnchorElement>(
+      'a[href="https://github.com/afurm/draftmora/pull/13"]',
+    );
+    expect(link?.target).toBe("_blank");
+    expect(link?.rel).toBe("noreferrer");
+    expect(document.body.querySelector("code")?.textContent).toContain("const city = 'Lviv';");
+    expect(document.body.querySelector("table")?.textContent).toContain("CIgreen");
+    expect(document.body.textContent).toContain("Reply to task");
     expect(document.body.textContent).not.toContain("Work started.");
-    expect(document.body.textContent).not.toContain("Progress");
-    expect(document.body.textContent).not.toContain("Save task");
-    expect(document.body.textContent).not.toContain("Delete");
-    expect(document.body.querySelector("#task-title")).toBeNull();
+    expect(document.body.querySelector('aside[aria-label="Task details"]')?.getAttribute("data-state")).toBe(
+      "collapsed",
+    );
+    await clickButtonByLabel("Expand task details");
+    expect(document.body.textContent).toContain("Notes");
+    expect(document.body.textContent).toContain("Where is Lviv located?");
+    expect(document.body.textContent).toContain("Details locked");
+    expect(document.body.textContent).toContain("Delete");
+    expect(document.body.querySelector<HTMLInputElement>("#task-title-inline")?.readOnly).toBe(
+      true,
+    );
+    expect(document.body.querySelector<HTMLInputElement>("#task-detail-title")?.disabled).toBe(
+      true,
+    );
+    expect(document.body.querySelector<HTMLTextAreaElement>("#task-detail-notes")?.disabled).toBe(
+      true,
+    );
     expect(document.body.querySelector("#task-follow-up")).not.toBeNull();
+    const originalRequest = Array.from(document.body.querySelectorAll('[data-slot="item"]')).find(
+      (element) => element.textContent?.includes("Original request"),
+    );
+    expect(originalRequest?.parentElement?.className).toContain("justify-start");
+    expect(originalRequest?.className).not.toContain("max-w");
+    expect(originalRequest?.querySelector('[data-slot="item-content"]')?.className).toContain(
+      "text-left",
+    );
   });
 
-  it("shows running AI work with terminal-style output", async () => {
+  it("shows running AI work above locked details", async () => {
     await renderTaskModal({
       ...task(),
       execution: execution({
@@ -63,14 +95,170 @@ describe("TaskModal", () => {
       }),
     });
 
-    expect(document.body.textContent).toContain("Running work");
+    expect(document.body.textContent).toContain("Running now");
     expect(document.body.textContent).toContain("Current step");
-    expect(document.body.textContent).toContain("Result");
+    expect(document.body.textContent).toContain("Assistant");
+    expect(document.body.textContent).not.toContain("Agent result");
     expect(document.body.textContent).toContain("No final result yet.");
-    expect(document.body.textContent).toContain("Technical details");
-    expect(document.body.textContent).toContain("Hide log");
-    expect(document.body.textContent).toContain("Waiting for assistant output...");
+    expect(document.body.querySelector('aside[aria-label="Task details"]')?.getAttribute("data-state")).toBe(
+      "collapsed",
+    );
+    await clickButtonByLabel("Expand task details");
+    expect(document.body.textContent).toContain("Details locked");
     expect(document.body.textContent).toContain("Queues behind current work");
+    expect(document.body.querySelector<HTMLInputElement>("#task-title-inline")?.readOnly).toBe(
+      true,
+    );
+    expect(document.body.querySelector<HTMLTextAreaElement>("#task-detail-notes")?.disabled).toBe(
+      true,
+    );
+  });
+
+  it("saves edited title and notes before agent work starts", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        status: "draft",
+      },
+      { onSave },
+    );
+
+    await changeField("#task-title-inline", "Update release notes");
+    await changeField("#task-detail-notes", "Document the merged PR and CI result.");
+    await clickButton("Save details");
+
+    expect(onSave).toHaveBeenCalledWith({
+      title: "Update release notes",
+      description: "Document the merged PR and CI result.",
+      status: "draft",
+      priority: "medium",
+      focusAreaId: null,
+      tags: [],
+    });
+  });
+
+  it("locks all details while active work is attached", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "running",
+          endedAt: null,
+          progressSummary: "Preparing the task context.",
+        }),
+      },
+      { onSave },
+    );
+
+    await clickButtonByLabel("Expand task details");
+
+    expect(document.body.querySelector<HTMLInputElement>("#task-title-inline")?.readOnly).toBe(
+      true,
+    );
+    expect(document.body.querySelector<HTMLInputElement>("#task-detail-title")?.disabled).toBe(
+      true,
+    );
+    expect(document.body.querySelector<HTMLTextAreaElement>("#task-detail-notes")?.disabled).toBe(
+      true,
+    );
+    expect(document.body.querySelector('button[aria-label="Status"]')).toBeNull();
+    expect(document.body.querySelector('button[aria-label="Priority"]')).toBeNull();
+    expect(document.body.querySelector('button[aria-label="Focus area"]')).toBeNull();
+    expect(document.body.querySelector<HTMLInputElement>('input[aria-label="Status"]')?.disabled).toBe(
+      true,
+    );
+    expect(
+      document.body.querySelector<HTMLInputElement>('input[aria-label="Priority"]')?.disabled,
+    ).toBe(true);
+    expect(
+      document.body.querySelector<HTMLInputElement>('input[aria-label="Focus area"]')?.disabled,
+    ).toBe(true);
+    expect(findButton("Save details")).toBeUndefined();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("keeps failure technical logs in the runs tab instead of the main thread", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "failed",
+        progressSummary: "Work needs attention.",
+        error: "WebSocket closed 1006",
+        output: [
+          "## Failure handoff",
+          "",
+          "Task: Find Lviv",
+          "Status: needs_attention",
+          "Failure: WebSocket closed 1006",
+          "",
+          "### Recent agent log",
+          "- progress: run_shell (npm test) completed in 42ms",
+          "",
+          "### Next assignee step",
+          "Open this task and address the concrete blocker.",
+        ].join("\n"),
+        events: [
+          {
+            id: "event-1",
+            kind: "running",
+            message: "Work started.",
+            createdAt: "2026-05-03T07:00:10.000Z",
+          },
+          {
+            id: "event-2",
+            kind: "progress",
+            message: "progress: run_shell (npm test) completed in 42ms",
+            createdAt: "2026-05-03T07:00:20.000Z",
+          },
+          {
+            id: "event-3",
+            kind: "failed",
+            message: "Work needs attention.",
+            createdAt: "2026-05-03T07:01:00.000Z",
+          },
+        ],
+      }),
+    });
+
+    expect(document.body.textContent).toContain("Failure handoff");
+    expect(document.body.textContent).toContain("Next action");
+    expect(document.body.textContent).toContain("Open this task and address the concrete blocker.");
+    expect(document.body.textContent).not.toContain("Next assignee step");
+    expect(document.body.textContent).not.toContain("run_shell (npm test)");
+
+    await clickButtonByLabel("Open Context");
+
+    expect(document.body.textContent).toContain("Latest next action");
+    expect(document.body.textContent).toContain("Open this task and address the concrete blocker.");
+
+    await clickButtonByLabel("Collapse task details");
+    await clickButtonByLabel("Open Runs");
+
+    expect(document.body.textContent).toContain("Technical details");
+    expect(document.body.textContent).toContain("progress: run_shell (npm test) completed in 42ms");
+    expect(document.body.textContent).toContain("error: WebSocket closed 1006");
+  });
+
+  it("collapses and expands the inspector like a sidebar", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({ status: "succeeded", output: "Done." }),
+    });
+
+    expect(getInspectorState()).toBe("collapsed");
+    expect(document.body.textContent).not.toContain("Details locked");
+
+    await clickButtonByLabel("Expand task details");
+
+    expect(getInspectorState()).toBe("expanded");
+    expect(document.body.textContent).toContain("Details locked");
+
+    await clickButtonByLabel("Collapse task details");
+
+    expect(getInspectorState()).toBe("collapsed");
+    expect(document.body.textContent).not.toContain("Details locked");
   });
 
   it("keeps previous results visible while a follow-up is running", async () => {
@@ -91,9 +279,12 @@ describe("TaskModal", () => {
     });
 
     expect(document.body.textContent).toContain("No final result yet.");
-    expect(document.body.textContent).toContain("Previous results");
     expect(document.body.textContent).toContain("Previous result that should stay visible.");
-    expect(document.body.textContent).toContain("Waiting for assistant output...");
+    const text = document.body.textContent ?? "";
+    expect(text.indexOf("Previous result that should stay visible.")).toBeLessThan(
+      text.indexOf("No final result yet."),
+    );
+    expect(text).not.toContain("Run 2: Running");
   });
 
   it("runs a next action as a scoped follow-up", async () => {
@@ -150,11 +341,35 @@ describe("TaskModal", () => {
       }),
     });
 
-    expect(document.body.textContent).toContain("Previous results");
     expect(document.body.textContent).toContain("Check CI results and fix failures.");
     expect(document.body.querySelector('section[aria-label="Next action"]')).toBeNull();
     expect(findButton("Run as follow-up")).toBeUndefined();
     expect(findButton("Draft task")).toBeUndefined();
+
+    await clickButtonByLabel("Open Context");
+
+    expect(document.body.textContent).not.toContain("Latest next action");
+  });
+
+  it("shows task-note next actions in the context inspector", async () => {
+    await renderTaskModal({
+      ...task(),
+      description: [
+        "Original notes for the task.",
+        "",
+        "Next action:",
+        "Address review comments and rerun CI.",
+      ].join("\n"),
+      execution: execution({
+        status: "succeeded",
+        output: "Latest result without a next action.",
+      }),
+    });
+
+    await clickButtonByLabel("Open Context");
+
+    expect(document.body.textContent).toContain("Latest next action");
+    expect(document.body.textContent).toContain("Address review comments and rerun CI.");
   });
 
   it("caps previous next-action context in follow-up prompts", async () => {
@@ -233,6 +448,21 @@ describe("TaskModal", () => {
     expect(document.body.querySelector('button[aria-label="Priority"]')).toBeTruthy();
     expect(document.body.querySelector('button[aria-label="Focus area"]')).toBeTruthy();
   });
+
+  it("requires explicit confirmation before deleting a task", async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(task(), { onDelete });
+
+    await clickButton("Delete");
+
+    expect(document.body.textContent).toContain("Delete this task?");
+    expect(document.body.textContent).toContain("Delete permanently");
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await clickButton("Delete permanently");
+
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
 });
 
 async function renderTaskModal(
@@ -263,8 +493,33 @@ async function clickButton(label: string) {
   });
 }
 
+async function clickButtonByLabel(label: string) {
+  const button = getButtonByLabel(label);
+  await act(async () => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+async function changeField(selector: string, value: string) {
+  const field = document.body.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+  expect(field).toBeTruthy();
+  const prototype =
+    field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+  await act(async () => {
+    valueSetter?.call(field, value);
+    field!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 function getButton(label: string) {
   const button = findButton(label);
+  expect(button).toBeTruthy();
+  return button as HTMLButtonElement;
+}
+
+function getButtonByLabel(label: string) {
+  const button = document.body.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
   expect(button).toBeTruthy();
   return button as HTMLButtonElement;
 }
@@ -273,6 +528,12 @@ function findButton(label: string) {
   return Array.from(document.body.querySelectorAll("button")).find(
     (element) => element.textContent === label,
   );
+}
+
+function getInspectorState() {
+  return document.body
+    .querySelector('aside[aria-label="Task details"]')
+    ?.getAttribute("data-state");
 }
 
 function task(): Task {
@@ -299,6 +560,8 @@ function execution(patch: Partial<TaskExecution> = {}): TaskExecution {
     status: "running",
     provider: "openai",
     model: "gpt-5.4",
+    requestKind: "initial",
+    requestPrompt: "Find Lviv\n\nWhere is Lviv located?",
     startedAt: "2026-05-03T07:00:00.000Z",
     endedAt: "2026-05-03T07:01:00.000Z",
     progressSummary: "Work completed.",
@@ -328,5 +591,5 @@ function execution(patch: Partial<TaskExecution> = {}): TaskExecution {
     createdAt: "2026-05-03T07:00:00.000Z",
     updatedAt: "2026-05-03T07:01:00.000Z",
     ...patch,
-  };
+  } as TaskExecution;
 }

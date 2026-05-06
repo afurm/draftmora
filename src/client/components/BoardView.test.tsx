@@ -107,6 +107,8 @@ function execution(): TaskExecution {
     status: "running",
     provider: "openai",
     model: "gpt-5.5",
+    requestKind: "initial",
+    requestPrompt: "Running task",
     startedAt: "2026-05-02T00:00:00.000Z",
     endedAt: null,
     progressSummary: "Preparing the task context.",

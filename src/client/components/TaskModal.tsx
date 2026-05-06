@@ -718,17 +718,7 @@ function PreviousExecutionResults(props: { executions: TaskExecution[] }) {
 }
 
 function extractExecutionNextAction(execution: TaskExecution) {
-  const outputs = [
-    execution.output,
-    ...(execution.previousExecutions ?? []).slice().reverse().map((previous) => previous.output),
-  ];
-  for (const output of outputs) {
-    const nextAction = extractNextAction(output);
-    if (nextAction) {
-      return nextAction;
-    }
-  }
-  return null;
+  return extractNextAction(execution.output);
 }
 
 function extractNextAction(output: string) {

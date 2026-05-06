@@ -273,6 +273,12 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   throw new Error("Timed out waiting for condition.");
 }
 
+async function flushQueuedPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { recursive: true, force: true });
@@ -617,6 +623,55 @@ describe("routes", () => {
     );
 
     expect(store.getTask(task.id)?.status).toBe("done");
+    await app.close();
+    store.close();
+  });
+
+  it("skips queued follow-up work when the task is deleted before it starts", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "routes-queue-delete-"));
+    tempDirs.push(dir);
+    const store = new BoardStore(path.join(dir, "board.db"));
+    const providerRouter = new BlockingTaskProviderRouter(store);
+    const app = buildServer({
+      store,
+      providerRouter,
+      memoryRoot: dir,
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Explain release risk",
+        status: "in_progress",
+      },
+    });
+    const task = created.json().task as Task;
+
+    await waitUntil(() => providerRouter.toolRequests.length === 1);
+
+    const followUp = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/follow-up`,
+      payload: { prompt: "Can you also list blockers?" },
+    });
+    expect(followUp.statusCode).toBe(201);
+    expect(followUp.json().task.execution.status).toBe("queued");
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/tasks/${task.id}`,
+    });
+    expect(deleted.statusCode).toBe(204);
+    expect(store.getTask(task.id)).toBeNull();
+
+    providerRouter.resolveNextToolRequest("Initial result from delayed provider.");
+    await waitUntil(() => providerRouter.requests.length === 1);
+    await flushQueuedPromises();
+
+    expect(providerRouter.toolRequests).toHaveLength(1);
+    expect(providerRouter.requests).toHaveLength(1);
+    expect(store.getTask(task.id)).toBeNull();
     await app.close();
     store.close();
   });

@@ -135,6 +135,28 @@ describe("TaskModal", () => {
     expect(getButton("Draft task").disabled).toBe(true);
   });
 
+  it("does not offer stale next actions from previous executions", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "succeeded",
+        output: "Latest follow-up result without any next action.",
+        previousExecutions: [
+          execution({
+            id: "execution-previous",
+            output: "Earlier result.\n\n## Next action\n- Check CI results and fix failures.",
+          }),
+        ],
+      }),
+    });
+
+    expect(document.body.textContent).toContain("Previous results");
+    expect(document.body.textContent).toContain("Check CI results and fix failures.");
+    expect(document.body.querySelector('section[aria-label="Next action"]')).toBeNull();
+    expect(findButton("Run as follow-up")).toBeUndefined();
+    expect(findButton("Draft task")).toBeUndefined();
+  });
+
   it("caps previous next-action context in follow-up prompts", async () => {
     const onAskFollowUp = vi.fn().mockResolvedValue(undefined);
     await renderTaskModal(
@@ -242,11 +264,15 @@ async function clickButton(label: string) {
 }
 
 function getButton(label: string) {
-  const button = Array.from(document.body.querySelectorAll("button")).find(
-    (element) => element.textContent === label,
-  );
+  const button = findButton(label);
   expect(button).toBeTruthy();
   return button as HTMLButtonElement;
+}
+
+function findButton(label: string) {
+  return Array.from(document.body.querySelectorAll("button")).find(
+    (element) => element.textContent === label,
+  );
 }
 
 function task(): Task {

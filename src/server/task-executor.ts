@@ -69,10 +69,18 @@ async function startExecution(
     events: [{ id: "", kind: "queued", message: input.queuedMessage, createdAt: "" }],
   });
   const run = async () => {
-    if (shouldMarkTaskInProgress) {
-      input.store.updateTask(input.task.id, { status: "in_progress" });
+    const existingTask = input.store.getTask(input.task.id);
+    if (!existingTask) {
+      return;
     }
-    const taskAtStart = input.store.getTask(input.task.id) ?? input.task;
+    let taskAtStart = existingTask;
+    if (shouldMarkTaskInProgress) {
+      const updatedTask = input.store.updateTask(input.task.id, { status: "in_progress" });
+      if (!updatedTask) {
+        return;
+      }
+      taskAtStart = updatedTask;
+    }
     const prompt = input.buildPrompt(taskAtStart);
     const startedAt = new Date().toISOString();
     let events = execution.events;

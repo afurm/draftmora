@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Clock3 } from "lucide-react";
+import { AlertTriangle, Check, Clock3, LoaderCircle } from "lucide-react";
 import type { DragEvent, KeyboardEvent } from "react";
 import type { FocusArea, Priority, Task } from "../../shared/types";
 import { PRIORITY_LABELS } from "../../shared/types";
@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/item";
 import { cn } from "@/lib/utils";
 import { getFocusAreaStyle } from "../focus-areas";
+
+type VisibleExecutionStatus = "queued" | "running";
 
 export function TaskCard(props: {
   task: Task;
@@ -80,6 +82,18 @@ export function TaskCard(props: {
           <Badge variant={priorityVariant(props.task.priority)}>
             {PRIORITY_LABELS[props.task.priority]}
           </Badge>
+          {props.task.execution &&
+            (props.task.execution.status === "queued" ||
+              props.task.execution.status === "running") && (
+              <Badge variant={executionBadgeVariant(props.task.execution.status)}>
+                {props.task.execution.status === "running" ? (
+                  <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                ) : (
+                  <Clock3 data-icon="inline-start" />
+                )}
+                {formatExecutionStatus(props.task.execution.status)}
+              </Badge>
+            )}
         </ItemFooter>
       </button>
     </Item>
@@ -87,6 +101,12 @@ export function TaskCard(props: {
 }
 
 function taskStatusIcon(task: Task) {
+  if (task.execution?.status === "running") {
+    return <LoaderCircle className="animate-spin" />;
+  }
+  if (task.execution?.status === "queued") {
+    return <Clock3 />;
+  }
   if (task.status === "done") {
     return <Check />;
   }
@@ -104,4 +124,12 @@ function priorityVariant(priority: Priority): "secondary" | "outline" | "destruc
     return "outline";
   }
   return "secondary";
+}
+
+function executionBadgeVariant(status: VisibleExecutionStatus): "secondary" | "outline" {
+  return status === "running" ? "secondary" : "outline";
+}
+
+function formatExecutionStatus(status: VisibleExecutionStatus): string {
+  return status === "running" ? "Running" : "Queued";
 }

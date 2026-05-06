@@ -75,6 +75,37 @@ describe("BoardStore", () => {
     reopened.close();
   });
 
+  it("keeps execution history out of task lists but available on task detail", () => {
+    const store = createStore();
+    const task = store.createTask({
+      title: "Review deployment",
+      status: "done",
+    });
+
+    store.createTaskExecution({
+      taskId: task.id,
+      provider: "openai",
+      status: "succeeded",
+      output: "First result.",
+    });
+    store.createTaskExecution({
+      taskId: task.id,
+      provider: "openai",
+      status: "succeeded",
+      output: "Second result.",
+    });
+
+    const listed = store.listTasks().find((entry) => entry.id === task.id);
+    expect(listed?.execution?.output).toBe("Second result.");
+    expect(listed?.execution?.previousExecutions).toBeUndefined();
+
+    const detailed = store.getTask(task.id);
+    expect(detailed?.execution?.output).toBe("Second result.");
+    expect(detailed?.execution?.previousExecutions).toHaveLength(1);
+    expect(detailed?.execution?.previousExecutions?.[0]?.output).toBe("First result.");
+    store.close();
+  });
+
   it("persists configurable focus areas in settings", () => {
     const store = createStore();
 
@@ -90,6 +121,68 @@ describe("BoardStore", () => {
       { id: "client", label: "Client", color: "rose" },
     ]);
     store.close();
+  });
+
+  it("persists advanced OpenAI provider configuration", () => {
+    const previousOrgId = process.env.OPENAI_ORG_ID;
+    const previousOrganization = process.env.OPENAI_ORGANIZATION;
+    const previousProjectId = process.env.OPENAI_PROJECT_ID;
+    const previousProject = process.env.OPENAI_PROJECT;
+    delete process.env.OPENAI_ORG_ID;
+    delete process.env.OPENAI_ORGANIZATION;
+    delete process.env.OPENAI_PROJECT_ID;
+    delete process.env.OPENAI_PROJECT;
+    const store = createStore();
+
+    try {
+      const settings = store.patchSettings({
+        providerConfigs: [
+          {
+            provider: "openai",
+            authMode: "api_key",
+            model: "gpt-5.5",
+            maxTokens: 8192,
+            temperature: 0.3,
+            reasoningEffort: "high",
+            reasoningSummary: "concise",
+            textVerbosity: "medium",
+            timeoutMs: 90_000,
+            maxRetries: 4,
+            maxRetryDelayMs: 20_000,
+            cacheRetention: "long",
+            transport: "websocket",
+            organizationId: "org_local",
+            projectId: "proj_local",
+          },
+        ],
+      });
+
+      expect(settings.providerConfigs[0]).toMatchObject({
+        authMode: "api_key",
+        maxTokens: 8192,
+        temperature: 0.3,
+        reasoningEffort: "high",
+        reasoningSummary: "concise",
+        textVerbosity: "medium",
+        timeoutMs: 90_000,
+        maxRetries: 4,
+        maxRetryDelayMs: 20_000,
+        cacheRetention: "long",
+        transport: "websocket",
+        organizationId: "org_local",
+        projectId: "proj_local",
+      });
+      expect(store.resolveHeadersForProvider("openai")).toEqual({
+        "OpenAI-Organization": "org_local",
+        "OpenAI-Project": "proj_local",
+      });
+    } finally {
+      store.close();
+      restoreEnv("OPENAI_ORG_ID", previousOrgId);
+      restoreEnv("OPENAI_ORGANIZATION", previousOrganization);
+      restoreEnv("OPENAI_PROJECT_ID", previousProjectId);
+      restoreEnv("OPENAI_PROJECT", previousProject);
+    }
   });
 
   it("ignores focus areas that are not in settings", () => {
@@ -168,3 +261,11 @@ describe("BoardStore", () => {
     store.close();
   });
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+}

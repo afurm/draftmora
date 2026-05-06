@@ -15,6 +15,17 @@ export const AGENT_RUN_STATUSES = [
   "blocked",
 ] as const;
 export const MEMORY_TARGETS = ["user", "memory"] as const;
+export const OPENAI_REASONING_EFFORTS = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
+export const OPENAI_REASONING_SUMMARIES = ["auto", "concise", "detailed"] as const;
+export const OPENAI_TEXT_VERBOSITIES = ["low", "medium", "high"] as const;
+export const OPENAI_CACHE_RETENTIONS = ["none", "short", "long"] as const;
+export const OPENAI_CODEX_TRANSPORTS = ["auto", "sse", "websocket"] as const;
 export const FOCUS_AREA_COLORS = [
   "blue",
   "emerald",
@@ -34,6 +45,11 @@ export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
 export type MemoryTarget = (typeof MEMORY_TARGETS)[number];
 export type FocusAreaColor = (typeof FOCUS_AREA_COLORS)[number];
 export type ProviderAuthMode = "oauth" | "api_key";
+export type OpenAiReasoningEffort = (typeof OPENAI_REASONING_EFFORTS)[number];
+export type OpenAiReasoningSummary = (typeof OPENAI_REASONING_SUMMARIES)[number];
+export type OpenAiTextVerbosity = (typeof OPENAI_TEXT_VERBOSITIES)[number];
+export type OpenAiCacheRetention = (typeof OPENAI_CACHE_RETENTIONS)[number];
+export type OpenAiCodexTransport = (typeof OPENAI_CODEX_TRANSPORTS)[number];
 
 export interface Task {
   id: string;
@@ -84,6 +100,7 @@ export interface TaskExecution {
   error: string | null;
   artifacts: TaskExecutionArtifact[];
   events: TaskExecutionEvent[];
+  previousExecutions?: TaskExecution[];
   createdAt: string;
   updatedAt: string;
 }
@@ -124,11 +141,41 @@ export interface ProviderConfig {
   model: string;
   baseUrl?: string;
   authMode: ProviderAuthMode;
+  maxTokens?: number;
+  temperature?: number;
+  reasoningEffort?: OpenAiReasoningEffort;
+  reasoningSummary?: OpenAiReasoningSummary;
+  textVerbosity?: OpenAiTextVerbosity;
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+  cacheRetention?: OpenAiCacheRetention;
+  transport?: OpenAiCodexTransport;
+  organizationId?: string;
+  projectId?: string;
   enabled: boolean;
   fallbackRank: number;
 }
 
-export type ProviderConfigPatch = Partial<Omit<ProviderConfig, "provider" | "baseUrl">> & {
+type NullableProviderConfigFields = {
+  maxTokens?: number | null;
+  temperature?: number | null;
+  reasoningEffort?: OpenAiReasoningEffort | null;
+  reasoningSummary?: OpenAiReasoningSummary | null;
+  textVerbosity?: OpenAiTextVerbosity | null;
+  timeoutMs?: number | null;
+  maxRetries?: number | null;
+  maxRetryDelayMs?: number | null;
+  cacheRetention?: OpenAiCacheRetention | null;
+  transport?: OpenAiCodexTransport | null;
+  organizationId?: string | null;
+  projectId?: string | null;
+};
+
+export type ProviderConfigPatch = Partial<
+  Omit<ProviderConfig, "provider" | "baseUrl" | keyof NullableProviderConfigFields>
+> &
+  NullableProviderConfigFields & {
   provider: ProviderId;
   baseUrl?: string | null;
   apiKey?: string | null;

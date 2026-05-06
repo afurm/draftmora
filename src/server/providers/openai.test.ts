@@ -136,6 +136,98 @@ describe("openAiProvider", () => {
     ).rejects.toThrow("assistantMsg.content.flatMap is not a function");
   });
 
+  it("retries OAuth Codex WebSocket closes over SSE", async () => {
+    mocks.complete
+      .mockResolvedValueOnce({
+        ...assistantMessage(""),
+        content: [],
+        stopReason: "error",
+        errorMessage: "WebSocket closed 1006",
+      })
+      .mockResolvedValueOnce(assistantMessage("Recovered over SSE."));
+
+    const response = await openAiProvider.complete(
+      makeRequest([{ role: "user", content: "continue the task" }]),
+      { ...auth, transport: "auto" },
+    );
+
+    expect(response.content).toBe("Recovered over SSE.");
+    expect(mocks.complete).toHaveBeenCalledTimes(2);
+    expect(mocks.complete.mock.calls[0][2]).toMatchObject({ transport: "auto" });
+    expect(mocks.complete.mock.calls[1][2]).toMatchObject({ transport: "sse" });
+  });
+
+  it("passes saved OpenAI request configuration to the SDK", async () => {
+    let capturedOptions: unknown;
+    mocks.complete.mockImplementation(async (_model, _context, options) => {
+      capturedOptions = options;
+      return assistantMessage();
+    });
+
+    await openAiProvider.complete(
+      makeRequest([{ role: "user", content: "ship it" }]),
+      {
+        ...auth,
+        authMode: "api_key",
+        source: "local",
+        baseUrl: "https://api.openai.com/v1",
+        headers: {
+          "OpenAI-Organization": "org_test",
+          "OpenAI-Project": "proj_test",
+        },
+        maxTokens: 4000,
+        temperature: 0.2,
+        reasoningEffort: "medium",
+        reasoningSummary: "concise",
+        textVerbosity: "high",
+        timeoutMs: 45_000,
+        maxRetries: 3,
+        maxRetryDelayMs: 10_000,
+        cacheRetention: "long",
+      },
+    );
+
+    expect(capturedOptions).toMatchObject({
+      apiKey: "test-token",
+      maxTokens: 4000,
+      temperature: 0.2,
+      reasoningEffort: "medium",
+      reasoningSummary: "concise",
+      textVerbosity: "high",
+      timeoutMs: 45_000,
+      maxRetries: 3,
+      maxRetryDelayMs: 10_000,
+      cacheRetention: "long",
+      headers: {
+        "OpenAI-Organization": "org_test",
+        "OpenAI-Project": "proj_test",
+      },
+    });
+  });
+
+  it("preserves request token caps over saved provider defaults", async () => {
+    let capturedOptions: unknown;
+    mocks.complete.mockImplementation(async (_model, _context, options) => {
+      capturedOptions = options;
+      return assistantMessage();
+    });
+
+    await openAiProvider.complete(
+      {
+        ...makeRequest([{ role: "user", content: "keep this bounded" }]),
+        maxTokens: 1200,
+      },
+      {
+        ...auth,
+        maxTokens: 4000,
+      },
+    );
+
+    expect(capturedOptions).toMatchObject({
+      maxTokens: 1200,
+    });
+  });
+
   it("allows tool-use responses through completeWithTools", async () => {
     mocks.complete.mockResolvedValue(assistantMessageWithToolCall());
 

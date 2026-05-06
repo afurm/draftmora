@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Priority, Task } from "../../shared/types";
+import type { Priority, Task, TaskExecution } from "../../shared/types";
 import { BoardView } from "./BoardView";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -55,19 +55,65 @@ describe("BoardView", () => {
       "Low priority task",
     ]);
   });
+
+  it("shows running task execution state on the task card", async () => {
+    await act(async () => {
+      root.render(
+        <BoardView
+          tasks={[task("running-task", "Running task", "medium", execution())]}
+          focusAreas={[]}
+          singleColumn="in_progress"
+          onCreateTask={vi.fn()}
+          onEditTask={vi.fn()}
+          onMoveTask={vi.fn()}
+        />,
+      );
+    });
+
+    const card = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open task Running task"]',
+    );
+
+    expect(card?.textContent).toContain("Running");
+  });
 });
 
-function task(id: string, title: string, priority: Priority): Task {
+function task(
+  id: string,
+  title: string,
+  priority: Priority,
+  execution: TaskExecution | null = null,
+): Task {
   return {
     id,
     title,
     description: "",
-    status: "ready",
+    status: execution?.status === "running" ? "in_progress" : "ready",
     priority,
     focusAreaId: null,
     tags: [],
     providerSource: "local",
-    execution: null,
+    execution,
+    createdAt: "2026-05-02T00:00:00.000Z",
+    updatedAt: "2026-05-02T00:00:00.000Z",
+  };
+}
+
+function execution(): TaskExecution {
+  return {
+    id: "execution-1",
+    taskId: "running-task",
+    agentRunId: null,
+    status: "running",
+    provider: "openai",
+    model: "gpt-5.5",
+    startedAt: "2026-05-02T00:00:00.000Z",
+    endedAt: null,
+    progressSummary: "Preparing the task context.",
+    output: "",
+    error: null,
+    artifacts: [],
+    events: [],
     createdAt: "2026-05-02T00:00:00.000Z",
     updatedAt: "2026-05-02T00:00:00.000Z",
   };

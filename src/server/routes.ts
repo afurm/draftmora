@@ -4,6 +4,11 @@ import Fastify from "fastify";
 import { z } from "zod";
 import {
   FOCUS_AREA_COLORS,
+  OPENAI_CACHE_RETENTIONS,
+  OPENAI_CODEX_TRANSPORTS,
+  OPENAI_REASONING_EFFORTS,
+  OPENAI_REASONING_SUMMARIES,
+  OPENAI_TEXT_VERBOSITIES,
   PRIORITIES,
   PROVIDERS,
   TASK_STATUSES,
@@ -40,8 +45,14 @@ const taskCreateSchema = z.object({
   providerSource: z.union([z.enum(PROVIDERS), z.literal("local")]).nullable().optional(),
 });
 
-const taskUpdateSchema = taskCreateSchema.partial().extend({
+const taskUpdateSchema = z.object({
   title: z.string().trim().min(1).optional(),
+  description: z.string().optional(),
+  status: z.enum(TASK_STATUSES).optional(),
+  priority: z.enum(PRIORITIES).optional(),
+  focusAreaId: z.string().nullable().optional(),
+  tags: z.array(z.string()).optional(),
+  providerSource: z.union([z.enum(PROVIDERS), z.literal("local")]).nullable().optional(),
 });
 
 const taskFollowUpSchema = z.object({
@@ -58,6 +69,18 @@ const settingsPatchSchema = z.object({
         model: z.string().optional(),
         baseUrl: z.string().nullable().optional(),
         authMode: z.enum(["oauth", "api_key"]).optional(),
+        maxTokens: z.number().nullable().optional(),
+        temperature: z.number().nullable().optional(),
+        reasoningEffort: z.enum(OPENAI_REASONING_EFFORTS).nullable().optional(),
+        reasoningSummary: z.enum(OPENAI_REASONING_SUMMARIES).nullable().optional(),
+        textVerbosity: z.enum(OPENAI_TEXT_VERBOSITIES).nullable().optional(),
+        timeoutMs: z.number().nullable().optional(),
+        maxRetries: z.number().nullable().optional(),
+        maxRetryDelayMs: z.number().nullable().optional(),
+        cacheRetention: z.enum(OPENAI_CACHE_RETENTIONS).nullable().optional(),
+        transport: z.enum(OPENAI_CODEX_TRANSPORTS).nullable().optional(),
+        organizationId: z.string().nullable().optional(),
+        projectId: z.string().nullable().optional(),
         enabled: z.boolean().optional(),
         fallbackRank: z.number().optional(),
         apiKey: z.string().nullable().optional(),
@@ -176,6 +199,14 @@ export function buildServer(options: {
   });
 
   app.get("/api/tasks", async () => ({ tasks: store.listTasks() }));
+
+  app.get<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
+    const task = store.getTask(request.params.id);
+    if (!task) {
+      return reply.status(404).send({ error: "Task not found" });
+    }
+    return { task };
+  });
 
   app.post("/api/tasks", async (request, reply) => {
     const input = taskCreateSchema.parse(request.body);

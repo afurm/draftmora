@@ -61,6 +61,16 @@ export class ProviderRouter {
         apiKey: oauth.apiKey,
         source: "oauth",
         baseUrl: "https://chatgpt.com/backend-api",
+        maxTokens: config.maxTokens,
+        temperature: config.temperature,
+        reasoningEffort: config.reasoningEffort,
+        reasoningSummary: config.reasoningSummary,
+        textVerbosity: config.textVerbosity,
+        timeoutMs: config.timeoutMs,
+        maxRetries: config.maxRetries,
+        maxRetryDelayMs: config.maxRetryDelayMs,
+        cacheRetention: config.cacheRetention,
+        transport: config.transport,
       };
     }
     const apiKey = this.store.resolveApiKeyForProvider(provider);
@@ -73,6 +83,17 @@ export class ProviderRouter {
       apiKey: apiKey.apiKey,
       source: apiKey.source,
       baseUrl: baseUrl.baseUrl,
+      headers: this.store.resolveHeadersForProvider(provider),
+      maxTokens: config.maxTokens,
+      temperature: config.temperature,
+      reasoningEffort: config.reasoningEffort,
+      reasoningSummary: config.reasoningSummary,
+      textVerbosity: config.textVerbosity,
+      timeoutMs: config.timeoutMs,
+      maxRetries: config.maxRetries,
+      maxRetryDelayMs: config.maxRetryDelayMs,
+      cacheRetention: config.cacheRetention,
+      transport: config.transport,
     };
   }
 }

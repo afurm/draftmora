@@ -7,10 +7,11 @@ import {
   Link2,
   LoaderCircle,
   MessageSquareText,
+  Plus,
   Send,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   FocusArea,
   Priority,
@@ -24,7 +25,6 @@ import { COLUMN_LABELS, PRIORITIES, TASK_STATUSES } from "../../shared/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +35,13 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupText,
+  InputGroupTextarea,
+} from "@/components/ui/input-group";
 import {
   Item,
   ItemActions,
@@ -59,6 +66,8 @@ import { getFocusAreaStyle } from "../focus-areas";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 const NO_FOCUS_AREA = "__none";
+const NEXT_ACTION_CONTEXT_RESULT_LIMIT = 5;
+const NEXT_ACTION_CONTEXT_OUTPUT_LIMIT = 2_500;
 
 export function TaskModal(props: {
   task: Task;
@@ -67,6 +76,7 @@ export function TaskModal(props: {
   onClose: () => void;
   onDelete?: () => Promise<void>;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
   onSave: (input: TaskCreateInput) => Promise<void>;
 }) {
   const [title, setTitle] = useState(props.task.title);
@@ -120,7 +130,7 @@ export function TaskModal(props: {
 
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{finished ? props.task.title || props.title : props.title}</DialogTitle>
           <DialogDescription>
@@ -132,7 +142,11 @@ export function TaskModal(props: {
 
         {finished ? (
           <>
-            <FinishedTaskContent task={props.task} onAskFollowUp={props.onAskFollowUp} />
+            <FinishedTaskContent
+              task={props.task}
+              onAskFollowUp={props.onAskFollowUp}
+              onCreateDraft={props.onCreateDraft}
+            />
             <DialogFooter>
               <Button variant="outline" onClick={props.onClose}>
                 Close
@@ -229,8 +243,10 @@ export function TaskModal(props: {
 
             {props.task.execution && (
               <TaskExecutionPanel
+                task={props.task}
                 execution={props.task.execution}
                 onAskFollowUp={props.onAskFollowUp}
+                onCreateDraft={props.onCreateDraft}
               />
             )}
 
@@ -261,43 +277,57 @@ export function TaskModal(props: {
 function FinishedTaskContent(props: {
   task: Task;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
 }) {
+  const notes = props.task.description.trim();
+
   if (props.task.execution) {
     return (
-      <TaskExecutionPanel
-        execution={props.task.execution}
-        onAskFollowUp={props.onAskFollowUp}
-        mode="finished"
-      />
+      <div className="flex flex-col gap-4">
+        <TaskNotes notes={notes} />
+        <TaskExecutionPanel
+          task={props.task}
+          execution={props.task.execution}
+          onAskFollowUp={props.onAskFollowUp}
+          onCreateDraft={props.onCreateDraft}
+          mode="finished"
+        />
+      </div>
     );
   }
 
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          <span>Task complete</span>
-          <Badge variant="secondary">
-            <CheckCircle2 data-icon="inline-start" />
-            Done
-          </Badge>
-        </CardTitle>
-        <CardDescription>{props.task.description || "This task is complete."}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Item variant="muted">
-          <ItemMedia variant="icon">
-            <CheckCircle2 />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>Completed</ItemTitle>
-            <p className="text-sm text-muted-foreground">
-              {props.task.description || "No notes saved."}
-            </p>
-          </ItemContent>
-        </Item>
-      </CardContent>
-    </Card>
+    <section className="flex flex-col gap-3" aria-label="Completed task">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-medium">Task complete</h3>
+        <Badge variant="secondary">
+          <CheckCircle2 data-icon="inline-start" />
+          Done
+        </Badge>
+      </div>
+      <Item variant="muted">
+        <ItemMedia variant="icon">
+          <CheckCircle2 />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>Completed</ItemTitle>
+          <p className="text-sm text-muted-foreground">
+            {notes || "No notes saved."}
+          </p>
+        </ItemContent>
+      </Item>
+    </section>
+  );
+}
+
+function TaskNotes(props: { notes: string }) {
+  return (
+    <section className="flex flex-col gap-2" aria-label="Task notes">
+      <h3 className="text-sm font-medium">Notes</h3>
+      <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+        {props.notes || "No notes saved."}
+      </p>
+    </section>
   );
 }
 
@@ -316,20 +346,39 @@ function FocusAreaOption(props: { area: FocusArea }) {
 }
 
 function TaskExecutionPanel(props: {
+  task: Task;
   execution: TaskExecution;
   onAskFollowUp?: (prompt: string) => Promise<void>;
+  onCreateDraft?: (input: TaskCreateInput) => Promise<void>;
   mode?: "active" | "finished";
 }) {
   const [followUp, setFollowUp] = useState("");
   const [asking, setAsking] = useState(false);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [nextActionConsumed, setNextActionConsumed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const finished = props.mode === "finished";
   const running =
     !finished && (props.execution.status === "queued" || props.execution.status === "running");
+  const [showExecutionLog, setShowExecutionLog] = useState(
+    props.execution.status === "running" || props.execution.status === "failed",
+  );
 
-  async function askFollowUp() {
-    const prompt = followUp.trim();
+  useEffect(() => {
+    if (props.execution.status === "running" || props.execution.status === "failed") {
+      setShowExecutionLog(true);
+    }
+  }, [props.execution.status]);
+
+  const nextAction = useMemo(() => extractExecutionNextAction(props.execution), [props.execution]);
+
+  useEffect(() => {
+    setNextActionConsumed(false);
+  }, [nextAction]);
+
+  async function askFollowUp(promptOverride?: string) {
+    const prompt = (promptOverride ?? followUp).trim();
     if (!prompt || !props.onAskFollowUp) {
       return;
     }
@@ -338,13 +387,18 @@ function TaskExecutionPanel(props: {
     setError(null);
     try {
       await props.onAskFollowUp(prompt);
-      setFollowUp("");
+      if (!promptOverride) {
+        setFollowUp("");
+      }
+      if (promptOverride) {
+        setNextActionConsumed(true);
+      }
       setNotice(
         finished
           ? "Follow-up sent."
           : running
-            ? "Follow-up sent. Progress will update here."
-            : "Follow-up work started.",
+            ? "Follow-up queued. It will start after the current work finishes."
+            : "Follow-up queued.",
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -353,108 +407,180 @@ function TaskExecutionPanel(props: {
     }
   }
 
+  async function runNextActionAsFollowUp() {
+    if (!nextAction) {
+      return;
+    }
+    await askFollowUp(formatNextActionFollowUpPrompt(props.task, props.execution, nextAction));
+  }
+
+  async function createDraftFromNextAction() {
+    if (!nextAction || !props.onCreateDraft) {
+      return;
+    }
+    setCreatingDraft(true);
+    setNotice(null);
+    setError(null);
+    try {
+      await props.onCreateDraft({
+        title: formatNextActionTaskTitle(nextAction),
+        description: formatNextActionTaskDescription(props.task, props.execution, nextAction),
+        status: "draft",
+        priority: props.task.priority,
+        focusAreaId: props.task.focusAreaId,
+        tags: [],
+        providerSource: "local",
+      });
+      setNextActionConsumed(true);
+      setNotice("Draft task created.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          <span>{finished ? "Task chat" : "AI work"}</span>
-          <Badge variant={props.execution.status === "failed" ? "destructive" : "secondary"}>
-            {executionStatusIcon(props.execution)}
-            {formatExecutionStatus(props.execution)}
-          </Badge>
-        </CardTitle>
-        <CardDescription>{formatExecutionWindow(props.execution)}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {!finished && (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-3 text-sm">
-              <span className="text-muted-foreground">Current step</span>
-              <span className="text-right font-medium">
-                {formatExecutionMessage(props.execution.progressSummary)}
-              </span>
-            </div>
-            <Progress value={executionProgress(props.execution)} />
+    <section
+      className="flex min-w-0 flex-col gap-4 overflow-hidden"
+      aria-label={finished ? "Task result" : "AI work"}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
+            <span>{finished ? "Task chat" : running ? "Running work" : "AI work"}</span>
+            <Badge variant={props.execution.status === "failed" ? "destructive" : "secondary"}>
+              {executionStatusIcon(props.execution)}
+              {formatExecutionStatus(props.execution)}
+            </Badge>
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {formatExecutionWindow(props.execution)}
+          </p>
+        </div>
+        {props.execution.model && <Badge variant="outline">{props.execution.model}</Badge>}
+      </div>
+
+      {!finished && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">Current step</span>
+            <span className="text-right font-medium">
+              {formatExecutionMessage(props.execution.progressSummary)}
+            </span>
           </div>
-        )}
+          <Progress value={executionProgress(props.execution)} />
+        </div>
+      )}
 
-        {props.execution.error && (
-          <Alert variant="destructive">
-            <AlertTriangle />
-            <AlertDescription>{props.execution.error}</AlertDescription>
-          </Alert>
-        )}
+      {props.execution.error && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertDescription>{props.execution.error}</AlertDescription>
+        </Alert>
+      )}
 
-        {props.execution.output && (
-          <Item variant="muted">
-            <ItemMedia variant="icon">
-              {finished ? <MessageSquareText /> : <CheckCircle2 />}
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>{finished ? "Assistant" : "Result"}</ItemTitle>
-              <MarkdownMessage>{props.execution.output}</MarkdownMessage>
-            </ItemContent>
-          </Item>
-        )}
+      <Separator />
+      <ExecutionInfo execution={props.execution} />
 
-        {props.execution.artifacts.length > 0 && (
-          <>
-            <Separator />
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">Artifacts</h3>
-              <ItemGroup>
-                {props.execution.artifacts.map((artifact) => (
-                  <ArtifactRow artifact={artifact} key={artifact.id} />
-                ))}
-              </ItemGroup>
-            </section>
-          </>
-        )}
+      <Separator />
+      <ExecutionResult execution={props.execution} />
 
-        {props.execution.events.length > 0 && (
-          <>
-            <Separator />
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">{finished ? "Work log" : "Progress"}</h3>
-              <ScrollArea className="max-h-72 pr-3">
-                <ItemGroup>
-                  {props.execution.events.map((event) => (
-                    <Item variant="outline" size="sm" key={event.id}>
-                      <ItemMedia variant="icon">
-                        {executionEventIcon(event.kind)}
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{formatEventTime(event.createdAt)}</ItemTitle>
-                        <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                          {formatExecutionMessage(event.message)}
-                        </p>
-                      </ItemContent>
-                    </Item>
-                  ))}
-                </ItemGroup>
-              </ScrollArea>
-            </section>
-          </>
-        )}
+      {props.execution.previousExecutions?.length ? (
+        <>
+          <Separator />
+          <PreviousExecutionResults executions={props.execution.previousExecutions} />
+        </>
+      ) : null}
 
-        {props.onAskFollowUp && (
-          <>
-            <Separator />
-            <FieldGroup>
-              {(notice || error) && (
-                <Alert variant={error ? "destructive" : "default"}>
-                  <MessageSquareText />
-                  <AlertDescription>{error ?? notice}</AlertDescription>
-                </Alert>
-              )}
-              <Field>
-                <FieldLabel htmlFor="task-follow-up">
-                  {running ? "Ask while it works" : "Ask a follow-up"}
-                </FieldLabel>
-                <Textarea
+      {(notice || error) && (
+        <Alert variant={error ? "destructive" : "default"}>
+          <MessageSquareText />
+          <AlertDescription>{error ?? notice}</AlertDescription>
+        </Alert>
+      )}
+
+      {nextAction && (props.onAskFollowUp || props.onCreateDraft) && (
+        <>
+          <Separator />
+          <section className="flex min-w-0 flex-col gap-2" aria-label="Next action">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-medium">Next action</h3>
+                <p className="mt-1 break-words text-sm text-muted-foreground">{nextAction}</p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                {props.onAskFollowUp && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void runNextActionAsFollowUp()}
+                    disabled={asking || creatingDraft || nextActionConsumed}
+                  >
+                    {asking ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <MessageSquareText data-icon="inline-start" />
+                    )}
+                    {asking ? "Sending..." : "Run as follow-up"}
+                  </Button>
+                )}
+                {props.onCreateDraft && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void createDraftFromNextAction()}
+                    disabled={asking || creatingDraft || nextActionConsumed}
+                  >
+                    {creatingDraft ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <Plus data-icon="inline-start" />
+                    )}
+                    {creatingDraft ? "Creating..." : "Draft task"}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+
+      {props.execution.artifacts.length > 0 && (
+        <>
+          <Separator />
+          <section className="flex flex-col gap-2">
+            <h3 className="text-sm font-medium">Artifacts</h3>
+            <ItemGroup>
+              {props.execution.artifacts.map((artifact) => (
+                <ArtifactRow artifact={artifact} key={artifact.id} />
+              ))}
+            </ItemGroup>
+          </section>
+        </>
+      )}
+
+      {props.onAskFollowUp && (
+        <>
+          <Separator />
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="task-follow-up">
+                {running ? "Ask while it works" : "Ask a follow-up"}
+              </FieldLabel>
+              <InputGroup className="min-h-28">
+                <InputGroupTextarea
                   id="task-follow-up"
                   value={followUp}
                   onChange={(event) => setFollowUp(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      void askFollowUp();
+                    }
+                  }}
                   placeholder={
                     running
                       ? "Add context, ask a question, or request a change."
@@ -462,29 +588,299 @@ function TaskExecutionPanel(props: {
                   }
                   className="min-h-24"
                 />
-                {!finished && (
-                  <FieldDescription>
-                    The new request stays attached to this task and appears in the progress log.
-                  </FieldDescription>
-                )}
-              </Field>
-              <Button
-                className="w-full sm:w-fit"
-                onClick={askFollowUp}
-                disabled={asking || !followUp.trim()}
-              >
-                {asking ? (
-                  <LoaderCircle className="animate-spin" data-icon="inline-start" />
-                ) : (
-                  <Send data-icon="inline-start" />
-                )}
-                {asking ? "Sending..." : "Send follow-up"}
-              </Button>
-            </FieldGroup>
-          </>
-        )}
-      </CardContent>
-    </Card>
+                <InputGroupAddon align="block-end" className="justify-between border-t">
+                  <InputGroupText>
+                    {running ? <Clock3 /> : <MessageSquareText />}
+                    <span>{running ? "Queues behind current work" : "Attached to task"}</span>
+                  </InputGroupText>
+                  <InputGroupButton
+                    type="button"
+                    variant="default"
+                    onClick={() => void askFollowUp()}
+                    disabled={asking || !followUp.trim()}
+                  >
+                    {asking ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : (
+                      <Send data-icon="inline-start" />
+                    )}
+                    {asking ? "Sending..." : "Send"}
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
+              {!finished && (
+                <FieldDescription>
+                  Follow-ups stay attached to this task and queue behind active work.
+                </FieldDescription>
+              )}
+            </Field>
+          </FieldGroup>
+        </>
+      )}
+
+      <Separator />
+      <ExecutionOutput
+        execution={props.execution}
+        expanded={showExecutionLog}
+        onExpandedChange={setShowExecutionLog}
+      />
+    </section>
+  );
+}
+
+function ExecutionInfo(props: { execution: TaskExecution }) {
+  const rows = [
+    { label: "Status", value: formatExecutionStatus(props.execution) },
+    { label: "Provider", value: formatProvider(props.execution.provider) },
+    { label: "Model", value: props.execution.model ?? "Default" },
+    {
+      label: "Started",
+      value: props.execution.startedAt ? formatEventTime(props.execution.startedAt) : "Not started",
+    },
+    {
+      label: props.execution.endedAt ? "Finished" : "Updated",
+      value: formatEventTime(props.execution.endedAt ?? props.execution.updatedAt),
+    },
+  ];
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Info</h3>
+      <dl className="grid gap-2 text-sm sm:grid-cols-2">
+        {rows.map((row) => (
+          <div className="min-w-0" key={row.label}>
+            <dt className="text-muted-foreground">{row.label}</dt>
+            <dd className="truncate font-medium">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function executionTerminalLines(execution: TaskExecution): string[] {
+  const lines = execution.events.map(
+    (event) => `[${formatEventTime(event.createdAt)}] ${formatExecutionMessage(event.message)}`,
+  );
+  if (execution.status === "queued") {
+    lines.push("", "Waiting for the current task run to finish.");
+  } else if (execution.status === "running") {
+    lines.push("", "Waiting for assistant output...");
+  }
+  if (execution.error) {
+    lines.push("", `error: ${execution.error}`);
+  }
+  return lines.length > 0 ? lines : ["No output yet."];
+}
+
+function ExecutionResult(props: { execution: TaskExecution }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Result</h3>
+      {props.execution.output.trim() ? (
+        <MarkdownMessage>{props.execution.output}</MarkdownMessage>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {props.execution.status === "queued" || props.execution.status === "running"
+            ? "No final result yet."
+            : "No result saved."}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function PreviousExecutionResults(props: { executions: TaskExecution[] }) {
+  const visibleExecutions = props.executions.filter((execution) => execution.output.trim());
+  if (visibleExecutions.length === 0) {
+    return null;
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Previous results</h3>
+      <ScrollArea className="max-h-80 max-w-full overflow-hidden pr-3">
+        <ItemGroup>
+          {visibleExecutions.map((execution) => (
+            <Item variant="muted" size="sm" className="items-start" key={execution.id}>
+              <ItemMedia variant="icon">
+                {executionStatusIcon(execution)}
+              </ItemMedia>
+              <ItemContent className="min-w-0 overflow-hidden">
+                <ItemTitle>{formatExecutionWindow(execution)}</ItemTitle>
+                <MarkdownMessage>{execution.output}</MarkdownMessage>
+              </ItemContent>
+            </Item>
+          ))}
+        </ItemGroup>
+      </ScrollArea>
+    </section>
+  );
+}
+
+function extractExecutionNextAction(execution: TaskExecution) {
+  return extractNextAction(execution.output);
+}
+
+function extractNextAction(output: string) {
+  const lines = output.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (isNextActionHeading(lines[index])) {
+      const nextAction = firstNextActionLine(lines.slice(index + 1));
+      if (nextAction) {
+        return nextAction;
+      }
+    }
+  }
+
+  for (const line of lines) {
+    const inlineMatch = line.match(
+      /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(?:next actions?|next steps?|what(?:'s| is) next)\s*(?:\*\*)?\s*[:：-]\s*(.+)$/i,
+    );
+    if (inlineMatch?.[1]) {
+      return normalizeNextActionLine(inlineMatch[1]);
+    }
+  }
+
+  return null;
+}
+
+function isNextActionHeading(line: string) {
+  return /^#{1,6}\s*(?:next actions?|next steps?|what(?:'s| is) next)\b/i.test(line.trim());
+}
+
+function firstNextActionLine(lines: string[]) {
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^#{1,6}\s+/.test(trimmed)) {
+      return null;
+    }
+    if (!trimmed || trimmed === "---" || trimmed.startsWith("```")) {
+      continue;
+    }
+    return normalizeNextActionLine(trimmed);
+  }
+  return null;
+}
+
+function normalizeNextActionLine(line: string) {
+  const normalized = line
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
+    .replace(/^\[[ xX]\]\s+/, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_`]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || null;
+}
+
+function formatNextActionFollowUpPrompt(
+  task: Task,
+  execution: TaskExecution,
+  nextAction: string,
+) {
+  return [
+    "Please continue with the next action below.",
+    "Treat this as the full task context if no other state is available.",
+    formatNextActionContext(task, execution, nextAction),
+  ].join("\n\n");
+}
+
+function formatNextActionTaskTitle(nextAction: string) {
+  if (nextAction.length <= 96) {
+    return nextAction;
+  }
+  const shortened = nextAction.slice(0, 93).trimEnd();
+  const lastSpace = shortened.lastIndexOf(" ");
+  return `${lastSpace > 48 ? shortened.slice(0, lastSpace) : shortened}...`;
+}
+
+function formatNextActionTaskDescription(
+  task: Task,
+  execution: TaskExecution,
+  nextAction: string,
+) {
+  return [
+    "Drafted from an existing task result. This note includes the needed context so the task can stand alone.",
+    formatNextActionContext(task, execution, nextAction),
+  ].join("\n\n");
+}
+
+function formatNextActionContext(task: Task, execution: TaskExecution, nextAction: string) {
+  const latestOutput = execution.output.trim();
+  const previousResultLimit = latestOutput
+    ? NEXT_ACTION_CONTEXT_RESULT_LIMIT - 1
+    : NEXT_ACTION_CONTEXT_RESULT_LIMIT;
+  const sections = [
+    "## Source task",
+    `Title: ${task.title || "Untitled task"}`,
+    `Status: ${COLUMN_LABELS[task.status]}`,
+    `Priority: ${task.priority}`,
+    task.description.trim() ? `Notes:\n${task.description.trim()}` : "Notes: None saved.",
+    latestOutput ? `## Latest result\n${truncateForTaskContext(latestOutput)}` : null,
+    formatPreviousResultContext(execution.previousExecutions ?? [], previousResultLimit),
+    `## Next action to complete\n${nextAction}`,
+  ];
+  return sections.filter(Boolean).join("\n\n");
+}
+
+function formatPreviousResultContext(executions: TaskExecution[], limit: number) {
+  if (limit <= 0) {
+    return null;
+  }
+  const previousResults = executions
+    .filter((execution) => execution.output.trim())
+    .slice(-Math.max(0, limit))
+    .map(
+      (execution, index) =>
+        `### Previous result ${index + 1}\n${truncateForTaskContext(execution.output.trim())}`,
+    );
+  if (previousResults.length === 0) {
+    return null;
+  }
+  return [
+    "## Previous results",
+    ...previousResults,
+  ].join("\n\n");
+}
+
+function truncateForTaskContext(value: string) {
+  if (value.length <= NEXT_ACTION_CONTEXT_OUTPUT_LIMIT) {
+    return value;
+  }
+  return `${value.slice(0, NEXT_ACTION_CONTEXT_OUTPUT_LIMIT)}\n...[truncated]`;
+}
+
+function ExecutionOutput(props: {
+  execution: TaskExecution;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
+  const lineCount = executionTerminalLines(props.execution).length;
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-medium">Technical details</h3>
+          <p className="text-sm text-muted-foreground">{lineCount} log lines</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onExpandedChange(!props.expanded)}
+        >
+          <FileText data-icon="inline-start" />
+          {props.expanded ? "Hide log" : "Show log"}
+        </Button>
+      </div>
+      {props.expanded && (
+        <ScrollArea className="max-h-48 max-w-full overflow-hidden rounded-lg border bg-muted">
+          <pre className="min-h-24 max-w-full whitespace-pre-wrap break-all p-3 font-mono text-xs leading-relaxed text-muted-foreground">
+            {executionTerminalLines(props.execution).join("\n")}
+          </pre>
+        </ScrollArea>
+      )}
+    </section>
   );
 }
 
@@ -540,19 +936,6 @@ function executionStatusIcon(execution: TaskExecution) {
   return <LoaderCircle className="animate-spin" data-icon="inline-start" />;
 }
 
-function executionEventIcon(kind: TaskExecution["events"][number]["kind"]) {
-  if (kind === "succeeded") {
-    return <CheckCircle2 />;
-  }
-  if (kind === "failed") {
-    return <AlertTriangle />;
-  }
-  if (kind === "queued") {
-    return <Clock3 />;
-  }
-  return <MessageSquareText />;
-}
-
 function executionProgress(execution: TaskExecution) {
   if (execution.status === "succeeded") return 100;
   if (execution.status === "failed") return 100;
@@ -571,6 +954,13 @@ function formatExecutionStatus(execution: TaskExecution) {
     return "Queued";
   }
   return "Running";
+}
+
+function formatProvider(provider: TaskExecution["provider"]) {
+  if (provider === "openai") {
+    return "OpenAI";
+  }
+  return "Local";
 }
 
 function formatExecutionWindow(execution: TaskExecution) {

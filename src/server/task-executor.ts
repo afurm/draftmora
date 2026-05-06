@@ -16,6 +16,7 @@ import type { ProviderRouter } from "./providers/router";
 import { redactedErrorMessage } from "./redaction";
 
 const MAX_LOCAL_TOOL_ROUNDS = 24;
+const taskExecutionQueues = new Map<string, Promise<void>>();
 
 type StartTaskExecutionInput = {
   store: BoardStore;
@@ -33,7 +34,7 @@ export async function startTaskExecutionForTask(
 ): Promise<TaskExecution> {
   return startExecution({
     ...input,
-    prompt: input.prompt ?? buildTaskExecutionPrompt(input.task),
+    buildPrompt: (task) => input.prompt ?? buildTaskExecutionPrompt(task),
     queuedMessage: "Request queued.",
   });
 }
@@ -43,15 +44,19 @@ export async function startTaskFollowUpExecutionForTask(
 ): Promise<TaskExecution> {
   return startExecution({
     ...input,
-    prompt: buildTaskFollowUpPrompt(input.task, input.followUp),
+    buildPrompt: (task) => buildTaskFollowUpPrompt(task, input.followUp),
     queuedMessage: "Follow-up queued.",
   });
 }
 
 async function startExecution(
-  input: StartTaskExecutionInput & { prompt: string; queuedMessage: string },
+  input: StartTaskExecutionInput & {
+    buildPrompt: (task: Task) => string;
+    queuedMessage: string;
+  },
 ): Promise<TaskExecution> {
-  if (input.task.status !== "done") {
+  const shouldMarkTaskInProgress = input.task.status !== "done";
+  if (shouldMarkTaskInProgress) {
     input.store.updateTask(input.task.id, { status: "in_progress" });
   }
   const config = input.store.getProviderConfig(input.provider);
@@ -64,6 +69,19 @@ async function startExecution(
     events: [{ id: "", kind: "queued", message: input.queuedMessage, createdAt: "" }],
   });
   const run = async () => {
+    const existingTask = input.store.getTask(input.task.id);
+    if (!existingTask) {
+      return;
+    }
+    let taskAtStart = existingTask;
+    if (shouldMarkTaskInProgress) {
+      const updatedTask = input.store.updateTask(input.task.id, { status: "in_progress" });
+      if (!updatedTask) {
+        return;
+      }
+      taskAtStart = updatedTask;
+    }
+    const prompt = input.buildPrompt(taskAtStart);
     const startedAt = new Date().toISOString();
     let events = execution.events;
     const running = input.store.updateTaskExecution(execution.id, {
@@ -99,13 +117,13 @@ async function startExecution(
     };
     try {
       const boardContext = buildBoardTaskContext(input.store.listTasks(), input.task.id);
-      const systemPrompt = buildTaskSystemPrompt(input.prompt, boardContext, input.memoryRoot);
+      const systemPrompt = buildTaskSystemPrompt(prompt, boardContext, input.memoryRoot);
       const result = await completeTaskWithLocalTools({
         router: input.router,
         provider: input.provider,
         model: config.model,
         systemPrompt,
-        prompt: input.prompt,
+        prompt,
         onToolProgress: (message) => appendProgressEvent("progress", message),
       });
       input.store.updateTaskExecution(execution.id, {
@@ -129,10 +147,10 @@ async function startExecution(
         provider: input.provider,
         model: config.model,
         messages: [
-          { role: "user", content: input.prompt },
+          { role: "user", content: prompt },
           { role: "assistant", content: result || "Finished." },
         ],
-        query: input.prompt,
+        query: prompt,
         memoryRoot: input.memoryRoot,
         source: "task",
         logger: input.memoryLogger,
@@ -140,7 +158,7 @@ async function startExecution(
     } catch (err) {
       const failureMessage = redactedErrorMessage(err);
       const handoff = buildFailureHandoff({
-        task: input.task,
+        task: taskAtStart,
         failureMessage,
         events,
       });
@@ -163,12 +181,27 @@ async function startExecution(
       input.store.updateTask(input.task.id, { status: "needs_attention" });
     }
   };
+  const queuedRun = enqueueTaskExecution(input.task.id, run);
   if (input.runInline) {
-    await run();
+    await queuedRun;
   } else {
-    void run();
+    void queuedRun.catch((err) => {
+      console.warn(err instanceof Error ? err.message : String(err));
+    });
   }
   return input.store.getTaskExecution(execution.id) ?? execution;
+}
+
+function enqueueTaskExecution(taskId: string, run: () => Promise<void>): Promise<void> {
+  const previous = taskExecutionQueues.get(taskId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(run);
+  const tracked = current.finally(() => {
+    if (taskExecutionQueues.get(taskId) === tracked) {
+      taskExecutionQueues.delete(taskId);
+    }
+  });
+  taskExecutionQueues.set(taskId, tracked);
+  return current;
 }
 
 async function completeTaskWithLocalTools(input: {
@@ -333,9 +366,41 @@ function buildTaskFollowUpPrompt(task: Task, prompt: string): string {
     `Title: ${task.title}`,
     task.description ? `Notes: ${task.description}` : "",
     `Priority: ${task.priority}`,
+    formatTaskExecutionScope(task),
     `Follow-up request: ${prompt}`,
     "Continue from the existing task context and reply in Markdown.",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatTaskExecutionScope(task: Task): string {
+  const executions = getTaskExecutionHistory(task).filter((execution) => execution.output.trim());
+  if (executions.length === 0) {
+    return "";
+  }
+  return [
+    "Existing task results:",
+    ...executions.slice(-5).map((execution, index) =>
+      [
+        `Result ${index + 1}: ${formatTaskExecutionWindow(execution)}`,
+        truncateForPrompt(execution.output.trim(), 2_500),
+      ].join("\n"),
+    ),
+  ].join("\n\n");
+}
+
+function getTaskExecutionHistory(task: Task): TaskExecution[] {
+  const previous = task.execution?.previousExecutions ?? [];
+  return task.execution ? [...previous, task.execution] : previous;
+}
+
+function formatTaskExecutionWindow(execution: TaskExecution): string {
+  if (execution.endedAt) {
+    return `finished ${execution.endedAt}`;
+  }
+  if (execution.startedAt) {
+    return `started ${execution.startedAt}`;
+  }
+  return `created ${execution.createdAt}`;
 }

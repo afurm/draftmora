@@ -34,19 +34,196 @@ describe("TaskModal", () => {
     });
 
     expect(document.body.textContent).toContain("Task chat");
-    expect(document.body.textContent).toContain("Assistant");
+    expect(document.body.textContent).toContain("Info");
+    expect(document.body.textContent).toContain("Notes");
+    expect(document.body.textContent).toContain("Where is Lviv located?");
+    expect(document.body.textContent).toContain("Result");
+    expect(document.body.textContent).toContain("Technical details");
+    expect(document.body.textContent).toContain("Show log");
     expect(document.body.textContent).toContain("Lviv is in western Ukraine.");
     expect(document.body.textContent).not.toContain("**Lviv**");
     expect(document.body.querySelector("strong")?.textContent).toBe("Lviv");
     expect(document.body.querySelector("li")?.textContent).toBe("It is close to Poland.");
     expect(document.body.textContent).toContain("Ask a follow-up");
-    expect(document.body.textContent).toContain("Work log");
-    expect(document.body.textContent).toContain("Work started.");
+    expect(document.body.textContent).not.toContain("Work started.");
     expect(document.body.textContent).not.toContain("Progress");
     expect(document.body.textContent).not.toContain("Save task");
     expect(document.body.textContent).not.toContain("Delete");
     expect(document.body.querySelector("#task-title")).toBeNull();
     expect(document.body.querySelector("#task-follow-up")).not.toBeNull();
+  });
+
+  it("shows running AI work with terminal-style output", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "running",
+        endedAt: null,
+        progressSummary: "Preparing the task context.",
+      }),
+    });
+
+    expect(document.body.textContent).toContain("Running work");
+    expect(document.body.textContent).toContain("Current step");
+    expect(document.body.textContent).toContain("Result");
+    expect(document.body.textContent).toContain("No final result yet.");
+    expect(document.body.textContent).toContain("Technical details");
+    expect(document.body.textContent).toContain("Hide log");
+    expect(document.body.textContent).toContain("Waiting for assistant output...");
+    expect(document.body.textContent).toContain("Queues behind current work");
+  });
+
+  it("keeps previous results visible while a follow-up is running", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "running",
+        endedAt: null,
+        output: "",
+        previousExecutions: [
+          execution({
+            id: "execution-previous",
+            status: "succeeded",
+            output: "Previous result that should stay visible.",
+          }),
+        ],
+      }),
+    });
+
+    expect(document.body.textContent).toContain("No final result yet.");
+    expect(document.body.textContent).toContain("Previous results");
+    expect(document.body.textContent).toContain("Previous result that should stay visible.");
+    expect(document.body.textContent).toContain("Waiting for assistant output...");
+  });
+
+  it("runs a next action as a scoped follow-up", async () => {
+    const onAskFollowUp = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "succeeded",
+          output: "Work completed.\n\n## Next action\n- Check CI results and fix failures.",
+          previousExecutions: [
+            execution({
+              id: "execution-previous",
+              output: "Previous result: PR was opened.",
+            }),
+          ],
+        }),
+      },
+      { onAskFollowUp },
+    );
+
+    expect(document.body.textContent).toContain("Next action");
+    expect(document.body.textContent).toContain("Check CI results and fix failures.");
+
+    await clickButton("Run as follow-up");
+
+    const prompt = onAskFollowUp.mock.calls[0]?.[0] ?? "";
+    expect(prompt).toContain("Treat this as the full task context");
+    expect(prompt).toContain("## Source task");
+    expect(prompt).toContain("Title: Find Lviv");
+    expect(prompt).toContain("Status: In Progress");
+    expect(prompt).toContain("Notes:\nWhere is Lviv located?");
+    expect(prompt).toContain("## Latest result");
+    expect(prompt).toContain("Work completed.");
+    expect(prompt).toContain("## Previous results");
+    expect(prompt).toContain("Previous result: PR was opened.");
+    expect(prompt).toContain("## Next action to complete\nCheck CI results and fix failures.");
+    expect(getButton("Run as follow-up").disabled).toBe(true);
+    expect(getButton("Draft task").disabled).toBe(true);
+  });
+
+  it("does not offer stale next actions from previous executions", async () => {
+    await renderTaskModal({
+      ...task(),
+      execution: execution({
+        status: "succeeded",
+        output: "Latest follow-up result without any next action.",
+        previousExecutions: [
+          execution({
+            id: "execution-previous",
+            output: "Earlier result.\n\n## Next action\n- Check CI results and fix failures.",
+          }),
+        ],
+      }),
+    });
+
+    expect(document.body.textContent).toContain("Previous results");
+    expect(document.body.textContent).toContain("Check CI results and fix failures.");
+    expect(document.body.querySelector('section[aria-label="Next action"]')).toBeNull();
+    expect(findButton("Run as follow-up")).toBeUndefined();
+    expect(findButton("Draft task")).toBeUndefined();
+  });
+
+  it("caps previous next-action context in follow-up prompts", async () => {
+    const onAskFollowUp = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "succeeded",
+          output: `${"Latest release detail. ".repeat(140)}\n\n## Next action\n- Check release logs.`,
+          previousExecutions: Array.from({ length: 6 }, (_, index) =>
+            execution({
+              id: `execution-previous-${index}`,
+              output:
+                index === 0
+                  ? "Oldest previous result that should not be included."
+                  : `Recent previous result ${index}. ${index === 5 ? "x".repeat(3_000) : ""}`,
+            }),
+          ),
+        }),
+      },
+      { onAskFollowUp },
+    );
+
+    await clickButton("Run as follow-up");
+
+    const prompt = onAskFollowUp.mock.calls[0]?.[0] ?? "";
+    expect(prompt).not.toContain("Oldest previous result that should not be included.");
+    expect(prompt).toContain("Recent previous result 2.");
+    expect(prompt).toContain("Recent previous result 5.");
+    expect(prompt).toContain("...[truncated]");
+  });
+
+  it("creates a draft task from a next action", async () => {
+    const onCreateDraft = vi.fn().mockResolvedValue(undefined);
+    await renderTaskModal(
+      {
+        ...task(),
+        execution: execution({
+          status: "succeeded",
+          output: "Work completed.\n\n**Next action:** Draft the release checklist.",
+        }),
+      },
+      { onCreateDraft },
+    );
+
+    await clickButton("Draft task");
+
+    expect(onCreateDraft).toHaveBeenCalledWith({
+      title: "Draft the release checklist.",
+      description: expect.stringContaining(
+        "Drafted from an existing task result. This note includes the needed context so the task can stand alone.",
+      ),
+      status: "draft",
+      priority: "medium",
+      focusAreaId: null,
+      tags: [],
+      providerSource: "local",
+    });
+    const draftInput = onCreateDraft.mock.calls[0]?.[0];
+    expect(draftInput?.description).toContain("## Source task");
+    expect(draftInput?.description).toContain("Title: Find Lviv");
+    expect(draftInput?.description).toContain("Status: In Progress");
+    expect(draftInput?.description).toContain("Priority: medium");
+    expect(draftInput?.description).toContain("Notes:\nWhere is Lviv located?");
+    expect(draftInput?.description).toContain("## Latest result");
+    expect(draftInput?.description).toContain("## Next action to complete\nDraft the release checklist.");
+    expect(getButton("Run as follow-up").disabled).toBe(true);
+    expect(getButton("Draft task").disabled).toBe(true);
   });
 
   it("labels editable select controls for assistive technology", async () => {
@@ -58,7 +235,10 @@ describe("TaskModal", () => {
   });
 });
 
-async function renderTaskModal(task: Task) {
+async function renderTaskModal(
+  task: Task,
+  overrides: Partial<Parameters<typeof TaskModal>[0]> = {},
+) {
   await act(async () => {
     root.render(
       <TaskModal
@@ -68,10 +248,31 @@ async function renderTaskModal(task: Task) {
         onClose={vi.fn()}
         onDelete={vi.fn()}
         onAskFollowUp={vi.fn()}
+        onCreateDraft={vi.fn()}
         onSave={vi.fn()}
+        {...overrides}
       />,
     );
   });
+}
+
+async function clickButton(label: string) {
+  const button = getButton(label);
+  await act(async () => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+function getButton(label: string) {
+  const button = findButton(label);
+  expect(button).toBeTruthy();
+  return button as HTMLButtonElement;
+}
+
+function findButton(label: string) {
+  return Array.from(document.body.querySelectorAll("button")).find(
+    (element) => element.textContent === label,
+  );
 }
 
 function task(): Task {

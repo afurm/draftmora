@@ -6,6 +6,7 @@ import {
   type Context,
   type Message,
   type Model,
+  type ProviderStreamOptions,
   type Usage,
 } from "@mariozechner/pi-ai";
 import type { AiProvider, ChatMessage, CompletionRequest, ProviderAuth } from "./types";
@@ -45,15 +46,92 @@ async function completeOpenAi(
   auth: ProviderAuth,
   maxTokens?: number,
 ): Promise<AssistantMessage> {
+  const options = buildOpenAiOptions(auth, maxTokens);
   try {
-    return await complete(model, context, {
-      apiKey: auth.apiKey,
-      maxTokens,
-      transport: auth.authMode === "oauth" ? "auto" : undefined,
-    });
+    const message = await complete(model, context, options);
+    if (shouldRetryCodexOverSse(message, auth, options)) {
+      return await complete(model, context, { ...options, transport: "sse" });
+    }
+    return message;
   } catch (err) {
-    throw redactedError(err);
+    const error = redactedError(err);
+    if (shouldRetryCodexOverSse(error, auth, options)) {
+      try {
+        return await complete(model, context, { ...options, transport: "sse" });
+      } catch (retryErr) {
+        throw redactedError(retryErr);
+      }
+    }
+    throw error;
   }
+}
+
+function buildOpenAiOptions(
+  auth: ProviderAuth,
+  requestMaxTokens?: number,
+): ProviderStreamOptions {
+  const options: ProviderStreamOptions = {
+    apiKey: auth.apiKey,
+  };
+  const maxTokens = requestMaxTokens ?? auth.maxTokens;
+  if (maxTokens !== undefined) {
+    options.maxTokens = maxTokens;
+  }
+  if (auth.temperature !== undefined) {
+    options.temperature = auth.temperature;
+  }
+  if (auth.authMode === "oauth") {
+    options.transport = auth.transport ?? "auto";
+  } else if (auth.transport) {
+    options.transport = auth.transport;
+  }
+  if (auth.cacheRetention) {
+    options.cacheRetention = auth.cacheRetention;
+  }
+  if (auth.timeoutMs !== undefined) {
+    options.timeoutMs = auth.timeoutMs;
+  }
+  if (auth.maxRetries !== undefined) {
+    options.maxRetries = auth.maxRetries;
+  }
+  if (auth.maxRetryDelayMs !== undefined) {
+    options.maxRetryDelayMs = auth.maxRetryDelayMs;
+  }
+  if (auth.headers) {
+    options.headers = auth.headers;
+  }
+  if (auth.reasoningEffort) {
+    options.reasoningEffort = auth.reasoningEffort;
+  }
+  if (auth.reasoningSummary) {
+    options.reasoningSummary = auth.reasoningSummary;
+  }
+  if (auth.textVerbosity) {
+    options.textVerbosity = auth.textVerbosity;
+  }
+  return options;
+}
+
+function shouldRetryCodexOverSse(
+  result: AssistantMessage | Error,
+  auth: ProviderAuth,
+  options: ProviderStreamOptions,
+) {
+  return (
+    auth.authMode === "oauth" &&
+    options.transport !== "sse" &&
+    isWebSocketCloseError(result)
+  );
+}
+
+function isWebSocketCloseError(result: AssistantMessage | Error) {
+  const message =
+    result instanceof Error
+      ? result.message
+      : result.stopReason === "error"
+        ? result.errorMessage
+        : undefined;
+  return /\bWebSocket closed(?:\s+\d+)?\b/i.test(message ?? "");
 }
 
 function resolveOpenAiModel(auth: ProviderAuth, modelId: string): Model<Api> {

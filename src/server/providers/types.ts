@@ -1,5 +1,13 @@
 import type { AssistantMessage, Context, Tool } from "@mariozechner/pi-ai";
-import type { ProviderAuthMode, ProviderId } from "../../shared/types";
+import type {
+  OpenAiCacheRetention,
+  OpenAiCodexTransport,
+  OpenAiReasoningEffort,
+  OpenAiReasoningSummary,
+  OpenAiTextVerbosity,
+  ProviderAuthMode,
+  ProviderId,
+} from "../../shared/types";
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -12,6 +20,17 @@ export type ProviderAuth = {
   apiKey: string;
   source: "env" | "local" | "oauth";
   baseUrl: string;
+  headers?: Record<string, string>;
+  maxTokens?: number;
+  temperature?: number;
+  reasoningEffort?: OpenAiReasoningEffort;
+  reasoningSummary?: OpenAiReasoningSummary;
+  textVerbosity?: OpenAiTextVerbosity;
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+  cacheRetention?: OpenAiCacheRetention;
+  transport?: OpenAiCodexTransport;
 };
 
 export type CompletionRequest = {

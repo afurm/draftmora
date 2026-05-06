@@ -94,6 +94,8 @@ API_PORT=3001
 BOARD_DB_PATH=./data/board.db
 OPENAI_API_KEY=
 OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_ORG_ID=
+OPENAI_PROJECT_ID=
 ```
 
 `WEB_PORT` controls the Vite dev and preview server. `API_PORT` controls the
@@ -107,6 +109,13 @@ Open Settings in the app to choose an auth mode:
   app, without pasting an API key.
 - API-key mode: save a key locally or provide `OPENAI_API_KEY` through the
   environment.
+
+The OpenAI settings screen also supports advanced request controls for model
+behavior and transport: max output tokens, temperature, reasoning effort,
+reasoning summaries, text verbosity, request timeout, retries, retry delay,
+prompt cache retention, and Codex transport. In API-key mode you can also set
+OpenAI organization/project headers in the app or through `OPENAI_ORG_ID` and
+`OPENAI_PROJECT_ID`.
 
 API keys, OAuth tokens, SQLite databases, build output, and dependency folders
 should not be committed.

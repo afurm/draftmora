@@ -6,6 +6,7 @@ import {
   Plus,
   Settings,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import type {
   AssistantChatConversation,
   FocusArea,
@@ -17,14 +18,18 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
+  SidebarInput,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSkeleton,
   SidebarRail,
+  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -268,21 +273,44 @@ function ChatHistoryGroup(props: {
   onConversationSelect: (conversationId: string) => void;
   onNewConversation: () => void;
 }) {
+  const [query, setQuery] = useState("");
+  const showSearch = props.conversations.length >= 5;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleConversations = useMemo(() => {
+    if (!showSearch || normalizedQuery.length === 0) {
+      return props.conversations;
+    }
+    return props.conversations.filter((conversation) =>
+      conversation.title.toLowerCase().includes(normalizedQuery),
+    );
+  }, [normalizedQuery, props.conversations, showSearch]);
+
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Conversations</SidebarGroupLabel>
-      <SidebarGroupContent>
+      <SidebarGroupAction
+        type="button"
+        aria-label="New chat"
+        title="New chat"
+        onClick={props.onNewConversation}
+      >
+        <Plus />
+        <span className="sr-only">New chat</span>
+      </SidebarGroupAction>
+      <SidebarGroupContent className="flex flex-col gap-2">
+        {showSearch && (
+          <>
+            <SidebarInput
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search conversations"
+              aria-label="Search conversations"
+              className="group-data-[collapsible=icon]:hidden"
+            />
+            <SidebarSeparator className="group-data-[collapsible=icon]:hidden" />
+          </>
+        )}
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              type="button"
-              onClick={props.onNewConversation}
-              tooltip="New conversation"
-            >
-              <Plus />
-              <span>New chat</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           {props.loading ? (
             Array.from({ length: 4 }, (_, index) => (
               <SidebarMenuItem key={index}>
@@ -306,14 +334,32 @@ function ChatHistoryGroup(props: {
                 </span>
               </SidebarMenuButton>
             </SidebarMenuItem>
+          ) : visibleConversations.length === 0 ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                disabled
+                className="h-auto items-start disabled:opacity-100"
+                tooltip="No matching conversations"
+              >
+                <MessageSquareText />
+                <span className="grid gap-0.5">
+                  <span>No matches</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    Try another search.
+                  </span>
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
           ) : (
-            props.conversations.map((conversation) => {
+            visibleConversations.map((conversation) => {
+              const isActive = conversation.id === props.activeConversationId;
               return (
                 <SidebarMenuItem key={conversation.id}>
                   <SidebarMenuButton
                     type="button"
-                    isActive={conversation.id === props.activeConversationId}
-                    className="h-auto min-h-11 items-start"
+                    isActive={isActive}
+                    className="h-auto min-h-11 items-start pr-14"
                     tooltip={conversation.title}
                     onClick={() => props.onConversationSelect(conversation.id)}
                   >
@@ -325,6 +371,9 @@ function ChatHistoryGroup(props: {
                       </span>
                     </span>
                   </SidebarMenuButton>
+                  <SidebarMenuBadge>
+                    {isActive ? "Open" : formatConversationBadge(conversation.updatedAt)}
+                  </SidebarMenuBadge>
                 </SidebarMenuItem>
               );
             })
@@ -345,5 +394,16 @@ function formatConversationTime(value: string): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+  }).format(date);
+}
+
+function formatConversationBadge(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Saved";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
   }).format(date);
 }

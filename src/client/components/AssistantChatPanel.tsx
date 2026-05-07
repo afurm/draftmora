@@ -7,8 +7,9 @@ import {
   ListChecks,
   LoaderCircle,
   MemoryStick,
-  MessageSquareText,
+  PanelRightOpen,
   Plus,
+  RotateCcw,
   Send,
   Settings2,
   Sparkles,
@@ -16,7 +17,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
 import { COLUMN_LABELS, type FocusArea, type TaskStatus } from "../../shared/types";
 import type {
   AssistantChatHistoryResponse,
@@ -25,7 +26,7 @@ import type {
   AssistantChatResponse,
   AssistantProposedAction,
 } from "../../shared/types";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +40,7 @@ import {
 } from "@/components/ui/card";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -58,11 +60,22 @@ import {
   ItemContent,
   ItemDescription,
   ItemGroup,
+  ItemHeader,
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
+import { Kbd } from "@/components/ui/kbd";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { api } from "../api";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -138,14 +151,26 @@ export function AssistantChatPanel({
   const [draft, setDraft] = useState("");
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [historyRetryKey, setHistoryRetryKey] = useState(0);
   const [actionStates, setActionStates] = useState<Record<string, ActionState>>({});
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const canSend = draft.trim().length > 0 && openAiReady && !loadingHistory && !sending;
+  const composerDisabled = !openAiReady || loadingHistory || sending;
+  const canSend = draft.trim().length > 0 && !composerDisabled;
+  const chatTitle = conversationTitle || "New conversation";
+  const chatStateDescription = formatConversationState({
+    loading: loadingHistory,
+    messageCount: messages.length,
+    conversationId,
+  });
 
   useEffect(() => {
+    setMessages([]);
     setDraft("");
-    setError(null);
+    setHistoryError(null);
+    setChatError(null);
     setActionStates({});
   }, [conversationId]);
 
@@ -153,22 +178,32 @@ export function AssistantChatPanel({
     if (typeof bottomRef.current?.scrollIntoView === "function") {
       bottomRef.current.scrollIntoView({ block: "end" });
     }
-  }, [messages, sending, error]);
+  }, [messages, sending, historyError, chatError]);
+
+  useEffect(() => {
+    if (!loadingHistory) {
+      focusComposer(textareaRef);
+    }
+  }, [conversationId, loadingHistory]);
 
   useEffect(() => {
     let cancelled = false;
     setLoadingHistory(true);
+    setHistoryError(null);
     onLoadHistory(conversationId)
       .then((history) => {
         if (!cancelled) {
           setMessages(history.messages);
           onMessagesChange?.(history.messages);
-          setError(null);
+          setHistoryError(null);
         }
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          const message = err instanceof Error ? err.message : String(err);
+          setMessages([]);
+          onMessagesChange?.([]);
+          setHistoryError(message);
         }
       })
       .finally(() => {
@@ -179,7 +214,7 @@ export function AssistantChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, onLoadHistory, onMessagesChange]);
+  }, [conversationId, historyRetryKey, onLoadHistory, onMessagesChange]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -204,7 +239,7 @@ export function AssistantChatPanel({
     onMessagesChange?.(nextMessages);
     setDraft("");
     setSending(true);
-    setError(null);
+    setChatError(null);
 
     try {
       const response = await onAsk(
@@ -219,9 +254,10 @@ export function AssistantChatPanel({
       setMessages(responseMessages);
       onMessagesChange?.(responseMessages);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setChatError(err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);
+      focusComposer(textareaRef);
     }
   }
 
@@ -236,7 +272,7 @@ export function AssistantChatPanel({
       onResolveProposedAction?.(action.id);
     } catch (err) {
       setActionStates((current) => ({ ...current, [action.id]: "failed" }));
-      setError(err instanceof Error ? err.message : String(err));
+      setChatError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -248,30 +284,40 @@ export function AssistantChatPanel({
     onResolveProposedAction?.(action.id);
   }
 
+  async function handleNewConversation() {
+    await onNewConversation?.();
+    focusComposer(textareaRef);
+  }
+
+  function retryHistory() {
+    setHistoryRetryKey((current) => current + 1);
+    focusComposer(textareaRef);
+  }
+
   return (
     <section
       className={cn(
-        "grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_20rem]",
+        "grid h-full min-h-0 min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_20rem]",
         className,
       )}
       aria-label="Draftmora chat workspace"
     >
-      <Card size="sm" className="h-full min-h-[38rem] min-w-0 xl:min-h-0">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessageSquareText />
-            Chat
-          </CardTitle>
-          <CardDescription className="truncate">
-            {conversationTitle || "New conversation"}
-          </CardDescription>
+      <Card size="sm" className="h-full min-h-0 min-w-0">
+        <CardHeader className="border-b">
+          <CardTitle className="truncate">{chatTitle}</CardTitle>
+          <CardDescription className="truncate">{chatStateDescription}</CardDescription>
           <CardAction className="flex items-center gap-2">
+            <ContextSheet
+              counts={boardCounts}
+              loading={loadingHistory}
+              memoryAvailable={memoryAvailable}
+            />
             {onNewConversation && (
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => void onNewConversation()}
+                onClick={() => void handleNewConversation()}
                 disabled={sending}
                 aria-label="New conversation"
               >
@@ -289,7 +335,8 @@ export function AssistantChatPanel({
           {!openAiReady && (
             <Alert>
               <AlertCircle />
-              <AlertDescription className="flex flex-col gap-2">
+              <AlertTitle>OpenAI setup required</AlertTitle>
+              <AlertDescription className="flex flex-col items-start gap-2">
                 <span>Connect OpenAI before sending a message.</span>
                 <Button type="button" size="sm" variant="outline" onClick={onOpenSettings}>
                   <Settings2 data-icon="inline-start" />
@@ -299,67 +346,76 @@ export function AssistantChatPanel({
             </Alert>
           )}
 
-          {error && (
+          {historyError && (
             <Alert variant="destructive">
               <AlertCircle />
-              <AlertDescription>{error}</AlertDescription>
+              <AlertTitle>Could not load this conversation</AlertTitle>
+              <AlertDescription className="flex flex-col items-start gap-2">
+                <span>{historyError}</span>
+                <Button type="button" size="sm" variant="outline" onClick={retryHistory}>
+                  <RotateCcw data-icon="inline-start" />
+                  Retry
+                </Button>
+              </AlertDescription>
             </Alert>
           )}
 
-          <ScrollArea className="min-h-0 flex-1 pr-3">
-            {loadingHistory ? (
-              <Empty className="min-h-full py-8 pb-12">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <LoaderCircle className="animate-spin" />
-                  </EmptyMedia>
-                  <EmptyTitle>Loading chat</EmptyTitle>
-                  <EmptyDescription>Restoring saved messages.</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : messages.length === 0 ? (
-              <Empty className="min-h-full py-8 pb-12">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <Bot />
-                  </EmptyMedia>
-                  <EmptyTitle>Start a chat</EmptyTitle>
-                  <EmptyDescription>
-                    Ask about priorities, task wording, or the next useful step.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <ItemGroup aria-live="polite" className="gap-3">
-                {messages.map((message) => (
-                  <ChatMessageRow
-                    actionStates={actionStates}
-                    focusAreas={focusAreas}
-                    message={message}
-                    key={message.id}
-                    onApproveAction={approveAction}
-                    onDismissAction={dismissAction}
-                  />
-                ))}
-                {sending && <PendingMessage />}
-                <div ref={bottomRef} />
-              </ItemGroup>
-            )}
+          {chatError && (
+            <Alert variant="destructive">
+              <AlertCircle />
+              <AlertTitle>Chat request failed</AlertTitle>
+              <AlertDescription>{chatError}</AlertDescription>
+            </Alert>
+          )}
+
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-1 pb-4">
+              {loadingHistory ? (
+                <ChatLoadingSkeleton />
+              ) : messages.length === 0 ? (
+                <ChatEmptyState
+                  disabled={!openAiReady || loadingHistory || sending}
+                  onPrompt={(prompt) => void sendContent(prompt)}
+                />
+              ) : (
+                <ItemGroup aria-live="polite" className="gap-3 py-3">
+                  {messages.map((message) => (
+                    <ChatMessageRow
+                      actionStates={actionStates}
+                      focusAreas={focusAreas}
+                      message={message}
+                      key={message.id}
+                      onApproveAction={approveAction}
+                      onDismissAction={dismissAction}
+                    />
+                  ))}
+                  {sending && <PendingMessage />}
+                  <div ref={bottomRef} />
+                </ItemGroup>
+              )}
+            </div>
           </ScrollArea>
         </CardContent>
 
-        <CardFooter>
+        <CardFooter className="shrink-0">
           <form onSubmit={submit} className="w-full">
             <FieldGroup className="gap-3">
-              <Field>
-                <FieldLabel htmlFor="assistant-chat-input">Message</FieldLabel>
-                <InputGroup className="min-h-28">
+              <Field data-disabled={composerDisabled ? true : undefined}>
+                <FieldLabel htmlFor="assistant-chat-input" className="sr-only">
+                  Message
+                </FieldLabel>
+                <InputGroup className="min-h-20">
                   <InputGroupTextarea
                     id="assistant-chat-input"
+                    ref={textareaRef}
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
-                    placeholder="Ask the agent..."
-                    className="min-h-24"
+                    placeholder={
+                      openAiReady ? "Ask the agent..." : "Connect OpenAI to start chatting"
+                    }
+                    className="min-h-16"
+                    disabled={composerDisabled}
+                    aria-label="Message"
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                         event.preventDefault();
@@ -368,9 +424,13 @@ export function AssistantChatPanel({
                     }}
                   />
                   <InputGroupAddon align="block-end" className="justify-between border-t">
-                    <InputGroupText>
+                    <InputGroupText className="min-w-0">
                       <Sparkles />
-                      <span>⌘ Enter</span>
+                      <span className="hidden sm:inline">Send with</span>
+                      <span className="inline-flex items-center gap-1">
+                        <Kbd>⌘</Kbd>
+                        <Kbd>Enter</Kbd>
+                      </span>
                     </InputGroupText>
                     <InputGroupButton type="submit" variant="default" disabled={!canSend}>
                       {sending ? (
@@ -388,19 +448,46 @@ export function AssistantChatPanel({
         </CardFooter>
       </Card>
 
-      <aside className="flex min-w-0 flex-col gap-3 xl:h-full">
+      <aside className="hidden min-w-0 flex-col gap-3 xl:flex xl:h-full">
         <ContextCard
           counts={boardCounts}
           loading={loadingHistory}
           memoryAvailable={memoryAvailable}
-          openAiReady={openAiReady}
-        />
-        <PromptStarters
-          disabled={!openAiReady || loadingHistory || sending}
-          onPrompt={(prompt) => void sendContent(prompt)}
         />
       </aside>
     </section>
+  );
+}
+
+function ContextSheet(props: {
+  counts: Record<TaskStatus, number>;
+  loading: boolean;
+  memoryAvailable: boolean;
+}) {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="xl:hidden"
+          aria-label="Open context"
+        >
+          <PanelRightOpen data-icon="inline-start" />
+          <span className="hidden sm:inline">Context</span>
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right">
+        <SheetHeader>
+          <SheetTitle>Current context</SheetTitle>
+          <SheetDescription>Board counts available to the chat agent.</SheetDescription>
+        </SheetHeader>
+        <div className="px-4 pb-4">
+          <ContextSnapshot {...props} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -408,104 +495,187 @@ function ContextCard(props: {
   counts: Record<TaskStatus, number>;
   loading: boolean;
   memoryAvailable: boolean;
-  openAiReady: boolean;
 }) {
-  const activeCount = props.counts.ready + props.counts.in_progress;
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>Context</CardTitle>
-        <CardDescription>Board snapshot</CardDescription>
+        <CardTitle>Current context</CardTitle>
+        <CardDescription>Board snapshot for this conversation.</CardDescription>
       </CardHeader>
       <CardContent>
-        <ItemGroup>
-          <Item variant="muted" size="sm">
-            <ItemMedia variant="icon">
-              <Bot />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>OpenAI</ItemTitle>
-              <ItemDescription>{props.openAiReady ? "Ready" : "Needs setup"}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Badge variant={props.openAiReady ? "secondary" : "outline"}>
-                {props.openAiReady ? "Ready" : "Setup"}
-              </Badge>
-            </ItemActions>
-          </Item>
-          <Item variant="muted" size="sm">
-            <ItemMedia variant="icon">
-              <ListChecks />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>Board</ItemTitle>
-              <ItemDescription>{activeCount} active tasks</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Badge variant="outline">{props.counts.draft} draft</Badge>
-            </ItemActions>
-          </Item>
-          <Item variant="muted" size="sm">
-            <ItemMedia variant="icon">
-              <MemoryStick />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>Memory</ItemTitle>
-              <ItemDescription>{props.memoryAvailable ? "Local" : "Unavailable"}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Badge variant={props.memoryAvailable ? "secondary" : "outline"}>
-                {props.memoryAvailable ? "On" : "Off"}
-              </Badge>
-            </ItemActions>
-          </Item>
-          {props.loading && (
-            <Item variant="outline" size="sm">
-              <ItemMedia variant="icon">
-                <LoaderCircle className="animate-spin" />
-              </ItemMedia>
-              <ItemContent>
-                <ItemTitle>Restoring chat</ItemTitle>
-              </ItemContent>
-            </Item>
-          )}
-        </ItemGroup>
+        <ContextSnapshot {...props} />
       </CardContent>
     </Card>
   );
 }
 
-function PromptStarters(props: {
+function ContextSnapshot(props: {
+  counts: Record<TaskStatus, number>;
+  loading: boolean;
+  memoryAvailable: boolean;
+}) {
+  const activeCount = props.counts.ready + props.counts.in_progress;
+  return (
+    <ItemGroup>
+      <Item variant="muted" size="sm">
+        <ItemMedia variant="icon">
+          <ListChecks />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>Ready now</ItemTitle>
+          <ItemDescription>
+            {props.counts.ready} ready · {props.counts.in_progress} in progress
+          </ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Badge variant="secondary">{activeCount}</Badge>
+        </ItemActions>
+      </Item>
+      <Item variant="muted" size="sm">
+        <ItemMedia variant="icon">
+          <Layers3 />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>Drafts</ItemTitle>
+          <ItemDescription>Work that still needs shaping.</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Badge variant="outline">{props.counts.draft}</Badge>
+        </ItemActions>
+      </Item>
+      <Item variant="muted" size="sm">
+        <ItemMedia variant="icon">
+          <ClipboardCheck />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>Needs attention</ItemTitle>
+          <ItemDescription>Tasks that may need review.</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Badge variant={props.counts.needs_attention > 0 ? "secondary" : "outline"}>
+            {props.counts.needs_attention}
+          </Badge>
+        </ItemActions>
+      </Item>
+      <Item variant="muted" size="sm">
+        <ItemMedia variant="icon">
+          <CheckCircle2 />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>Done</ItemTitle>
+          <ItemDescription>Completed local work.</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Badge variant="outline">{props.counts.done}</Badge>
+        </ItemActions>
+      </Item>
+      <Item variant="muted" size="sm">
+        <ItemMedia variant="icon">
+          <MemoryStick />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>Memory</ItemTitle>
+          <ItemDescription>
+            {props.memoryAvailable ? "Local recall available." : "Not available."}
+          </ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Badge variant={props.memoryAvailable ? "secondary" : "outline"}>
+            {props.memoryAvailable ? "On" : "Off"}
+          </Badge>
+        </ItemActions>
+      </Item>
+      {props.loading && (
+        <Item variant="outline" size="sm">
+          <ItemMedia variant="icon">
+            <LoaderCircle className="animate-spin" />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>Restoring chat</ItemTitle>
+            <ItemDescription>Loading saved messages.</ItemDescription>
+          </ItemContent>
+        </Item>
+      )}
+    </ItemGroup>
+  );
+}
+
+function ChatEmptyState(props: {
   disabled: boolean;
   onPrompt: (prompt: string) => void;
 }) {
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>Prompt Starters</CardTitle>
-        <CardDescription>Proactive next steps</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-2">
-          {PROMPT_STARTERS.map((starter) => {
-            const Icon = starter.icon;
-            return (
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full justify-start"
-                disabled={props.disabled}
-                onClick={() => props.onPrompt(starter.prompt)}
-                key={starter.label}
-              >
-                <Icon data-icon="inline-start" />
-                <span className="truncate">{starter.label}</span>
-              </Button>
-            );
-          })}
+    <Empty className="min-h-full py-8 pb-12">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <Bot />
+        </EmptyMedia>
+        <EmptyTitle>Start a chat</EmptyTitle>
+        <EmptyDescription>
+          Ask about priorities, task wording, or the next useful step.
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent className="max-w-2xl">
+        <PromptStarterActions disabled={props.disabled} onPrompt={props.onPrompt} />
+      </EmptyContent>
+    </Empty>
+  );
+}
+
+function PromptStarterActions(props: {
+  disabled: boolean;
+  onPrompt: (prompt: string) => void;
+}) {
+  return (
+    <div className="flex w-full flex-col gap-2 sm:flex-row">
+      {PROMPT_STARTERS.map((starter) => {
+        const Icon = starter.icon;
+        return (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-w-0 flex-1 justify-start"
+            disabled={props.disabled}
+            onClick={() => props.onPrompt(starter.prompt)}
+            key={starter.label}
+          >
+            <Icon data-icon="inline-start" />
+            <span className="truncate">{starter.label}</span>
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChatLoadingSkeleton() {
+  return (
+    <ItemGroup aria-label="Loading chat history" className="gap-3 py-3">
+      {Array.from({ length: 3 }, (_, index) => (
+        <div
+          className={cn("flex w-full", index === 1 ? "justify-end" : "justify-start")}
+          key={index}
+        >
+          <Item
+            variant={index === 1 ? "default" : "muted"}
+            size="sm"
+            className={cn(
+              "w-fit max-w-[min(42rem,100%)] items-start",
+              index === 1 && "max-w-[min(34rem,100%)]",
+            )}
+          >
+            <ItemMedia variant="icon">
+              <Skeleton className="size-4 rounded-full" />
+            </ItemMedia>
+            <ItemContent>
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className={index === 1 ? "h-4 w-48" : "h-4 w-full"} />
+              {index !== 1 && <Skeleton className="h-4 w-4/5" />}
+            </ItemContent>
+          </Item>
         </div>
-      </CardContent>
-    </Card>
+      ))}
+    </ItemGroup>
   );
 }
 
@@ -524,15 +694,26 @@ function ChatMessageRow(props: {
         variant={isUser ? "default" : "muted"}
         size="sm"
         className={cn(
-          "max-w-[92%] items-start",
+          "w-fit max-w-[min(42rem,100%)] items-start",
           isUser && "border-transparent bg-primary text-primary-foreground",
+          isUser && "max-w-[min(34rem,100%)]",
         )}
       >
         <ItemMedia variant="icon">
           {isUser ? <UserRound /> : <Bot />}
         </ItemMedia>
-        <ItemContent className="min-w-0">
-          <ItemTitle>{isUser ? "You" : "Agent"}</ItemTitle>
+        <ItemContent className="min-w-0 gap-2">
+          <ItemHeader className="basis-auto justify-start">
+            <ItemTitle>{isUser ? "You" : "Agent"}</ItemTitle>
+            <span
+              className={cn(
+                "text-xs text-muted-foreground",
+                isUser && "text-primary-foreground/70",
+              )}
+            >
+              {formatMessageTime(props.message.createdAt)}
+            </span>
+          </ItemHeader>
           {isUser ? (
             <p className="whitespace-pre-wrap text-sm leading-relaxed">{props.message.content}</p>
           ) : (
@@ -574,10 +755,12 @@ function ProposedActionRow(props: {
     <Item variant="outline" size="sm" className="items-start">
       <ItemMedia variant="icon">{actionIcon(props.action)}</ItemMedia>
       <ItemContent className="min-w-0">
-        <ItemTitle className="max-w-full">
-          <span className="truncate">{props.action.title}</span>
-          <Badge variant="outline">{actionLabel(props.action)}</Badge>
-        </ItemTitle>
+        <ItemHeader className="basis-auto items-start">
+          <ItemTitle className="line-clamp-none max-w-full flex-1 flex-wrap">
+            <span className="truncate">{props.action.title}</span>
+            <Badge variant="outline">{actionLabel(props.action)}</Badge>
+          </ItemTitle>
+        </ItemHeader>
         {props.action.rationale && <ItemDescription>{props.action.rationale}</ItemDescription>}
         <ActionFieldList action={props.action} focusAreas={props.focusAreas} />
       </ItemContent>
@@ -619,26 +802,34 @@ function ActionFieldList(props: {
     return null;
   }
   return (
-    <dl className="grid gap-1 text-sm sm:grid-cols-2">
+    <ItemGroup className="gap-1 pt-1">
       {rows.map((row) => (
-        <div className="min-w-0" key={`${row.label}-${row.value}`}>
-          <dt className="text-muted-foreground">{row.label}</dt>
-          <dd className="truncate font-medium">{row.value}</dd>
-        </div>
+        <Item
+          variant="muted"
+          size="xs"
+          className="grid grid-cols-[minmax(4.5rem,auto)_minmax(0,1fr)]"
+          key={`${row.label}-${row.value}`}
+        >
+          <span className="text-muted-foreground">{row.label}</span>
+          <span className="truncate font-medium">{row.value}</span>
+        </Item>
       ))}
-    </dl>
+    </ItemGroup>
   );
 }
 
 function PendingMessage() {
   return (
     <div className="flex w-full justify-start">
-      <Item variant="muted" size="sm" className="max-w-[92%] items-start">
+      <Item variant="muted" size="sm" className="w-fit max-w-[min(42rem,100%)] items-start">
         <ItemMedia variant="icon">
           <LoaderCircle className="animate-spin" />
         </ItemMedia>
         <ItemContent>
-          <ItemTitle>Agent</ItemTitle>
+          <ItemHeader className="basis-auto justify-start">
+            <ItemTitle>Agent</ItemTitle>
+            <span className="text-xs text-muted-foreground">Now</span>
+          </ItemHeader>
           <p className="text-sm text-muted-foreground">Thinking...</p>
         </ItemContent>
       </Item>
@@ -721,4 +912,33 @@ function formatPatchValue(key: string, value: unknown, focusAreas: FocusArea[]):
     return "None";
   }
   return String(value);
+}
+
+function formatConversationState(props: {
+  loading: boolean;
+  messageCount: number;
+  conversationId: string | null;
+}): string {
+  if (props.loading) {
+    return "Restoring saved history";
+  }
+  if (props.messageCount === 0) {
+    return props.conversationId ? "No messages yet" : "Unsaved local conversation";
+  }
+  return `${props.messageCount} ${props.messageCount === 1 ? "message" : "messages"} · Saved local history`;
+}
+
+function formatMessageTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Saved";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function focusComposer(ref: RefObject<HTMLTextAreaElement | null>) {
+  window.setTimeout(() => ref.current?.focus(), 0);
 }

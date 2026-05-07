@@ -94,6 +94,10 @@ describe("AssistantChatPanel", () => {
 
     const textarea = container.querySelector<HTMLTextAreaElement>("#assistant-chat-input");
     expect(textarea).not.toBeNull();
+    expect(
+      container.querySelector<HTMLElement>('[data-slot="card-title"]')?.textContent,
+    ).toBe("Planning");
+    expect(container.textContent).not.toContain("ChatChat");
 
     await act(async () => {
       setTextareaValue(textarea!, "Plan my day");
@@ -143,12 +147,68 @@ describe("AssistantChatPanel", () => {
       onLoadHistory: historyLoader(conversation, []),
     });
 
+    const emptyState = container.querySelector<HTMLElement>('[data-slot="empty"]');
+    expect(emptyState?.textContent).toContain("Plan today");
+    expect(emptyState?.textContent).toContain("Break down drafts");
+    expect(emptyState?.textContent).toContain("Review stuck work");
+
     await act(async () => {
       getButtonByText("Plan today").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(onAsk).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("Response for");
+  });
+
+  it("opens board context from the compact context action", async () => {
+    const conversation = conversationFixture();
+
+    await renderPanel({
+      conversation,
+      onLoadHistory: historyLoader(conversation, []),
+    });
+
+    expect(document.body.textContent).not.toContain(
+      "Board counts available to the chat agent.",
+    );
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Open context"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.textContent).toContain("Board counts available to the chat agent.");
+    expect(document.body.querySelector('[data-slot="sheet-title"]')?.textContent).toBe(
+      "Current context",
+    );
+  });
+
+  it("shows a retry path when conversation history fails to load", async () => {
+    const conversation = conversationFixture();
+    const onLoadHistory = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("History unavailable"))
+      .mockResolvedValueOnce({
+        conversations: [conversation],
+        activeConversationId: conversation.id,
+        messages: [],
+      });
+
+    await renderPanel({
+      conversation,
+      onLoadHistory,
+    });
+
+    expect(container.textContent).toContain("Could not load this conversation");
+    expect(container.textContent).toContain("History unavailable");
+
+    await act(async () => {
+      getButtonByText("Retry").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onLoadHistory).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Start a chat");
   });
 
   it("renders proposed task actions and requires approval or dismissal", async () => {
@@ -194,6 +254,7 @@ describe("AssistantChatPanel", () => {
     expect(container.textContent).toContain("Create launch task");
     expect(container.textContent).toContain("Draft launch notes");
     expect(container.textContent).toContain("The draft is ready");
+    expect(container.querySelector("dl")).toBeNull();
 
     await act(async () => {
       getButtonsByText("Approve")[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -222,6 +283,9 @@ describe("AssistantChatPanel", () => {
 
     const textarea = container.querySelector<HTMLTextAreaElement>("#assistant-chat-input");
     expect(textarea).not.toBeNull();
+    expect(textarea!.disabled).toBe(true);
+    expect(container.textContent).toContain("OpenAI setup required");
+    expect(getButtonByText("Open Settings")).not.toBeNull();
 
     await act(async () => {
       setTextareaValue(textarea!, "Plan my day");

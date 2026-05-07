@@ -58,11 +58,8 @@ export function BoardView(props: {
   );
 
   useEffect(() => {
-    const bestStatus = pickBestMobileStatus(columns, props.tasks);
-    const currentHasTasks = props.tasks.some((task) => task.status === mobileStatus);
-    const bestHasTasks = props.tasks.some((task) => task.status === bestStatus);
-    if (!columns.includes(mobileStatus) || (!currentHasTasks && bestHasTasks)) {
-      setMobileStatus(bestStatus);
+    if (!columns.includes(mobileStatus)) {
+      setMobileStatus(pickBestMobileStatus(columns, props.tasks));
     }
   }, [columns, mobileStatus, props.tasks]);
 

@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Priority, Task, TaskExecution } from "../../shared/types";
+import type { Priority, Task, TaskExecution, TaskStatus } from "../../shared/types";
 import { BoardView } from "./BoardView";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -76,6 +76,48 @@ describe("BoardView", () => {
 
     expect(card?.textContent).toContain("Running");
   });
+
+  it("lets mobile users stay on an empty status tab", async () => {
+    await act(async () => {
+      root.render(
+        <BoardView
+          tasks={[]}
+          focusAreas={[]}
+          visibleStatuses={["draft", "ready"]}
+          onCreateTask={vi.fn()}
+          onEditTask={vi.fn()}
+          onMoveTask={vi.fn()}
+        />,
+      );
+    });
+
+    const draftTab = container.querySelector<HTMLElement>(
+      '[data-board-mobile-status="draft"]',
+    );
+    const readyTab = container.querySelector<HTMLElement>(
+      '[data-board-mobile-status="ready"]',
+    );
+
+    expect(draftTab?.getAttribute("data-state")).toBe("active");
+
+    await act(async () => {
+      root.render(
+        <BoardView
+          tasks={[task("ready-task", "Ready task", "medium", null, "ready")]}
+          focusAreas={[]}
+          visibleStatuses={["draft", "ready"]}
+          onCreateTask={vi.fn()}
+          onEditTask={vi.fn()}
+          onMoveTask={vi.fn()}
+        />,
+      );
+    });
+
+    await waitFor(() => {
+      expect(draftTab?.getAttribute("data-state")).toBe("active");
+    });
+    expect(readyTab?.getAttribute("data-state")).toBe("inactive");
+  });
 });
 
 function task(
@@ -83,12 +125,13 @@ function task(
   title: string,
   priority: Priority,
   execution: TaskExecution | null = null,
+  status?: TaskStatus,
 ): Task {
   return {
     id,
     title,
     description: "",
-    status: execution?.status === "running" ? "in_progress" : "ready",
+    status: status ?? (execution?.status === "running" ? "in_progress" : "ready"),
     priority,
     focusAreaId: null,
     tags: [],
@@ -97,6 +140,22 @@ function task(
     createdAt: "2026-05-02T00:00:00.000Z",
     updatedAt: "2026-05-02T00:00:00.000Z",
   };
+}
+
+async function waitFor(assertion: () => void) {
+  let lastError: unknown;
+  for (let index = 0; index < 40; index += 1) {
+    try {
+      assertion();
+      return;
+    } catch (err) {
+      lastError = err;
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 10));
+      });
+    }
+  }
+  throw lastError;
 }
 
 function execution(): TaskExecution {

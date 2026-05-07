@@ -12,6 +12,7 @@ coverage
 .vite
 .vitest
 .npm
+hyperframes-video-work/
 USER.md
 MEMORY.md
 .mem_*.tmp

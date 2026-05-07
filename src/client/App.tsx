@@ -1,11 +1,22 @@
 import {
   AlertCircle,
+  Filter,
   LoaderCircle,
   Monitor,
   Plus,
   Search,
+  X,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type {
   AppSettings,
   AssistantChatConversation,
@@ -27,16 +38,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Kbd } from "@/components/ui/kbd";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { api } from "./api";
 import {
   preserveTransientProposedActions,
@@ -63,6 +80,7 @@ const TaskModal = lazy(() =>
 type View = "board" | "settings";
 type WorkspaceMode = "board" | "chat";
 type HistoryWriteMode = "push" | "replace";
+type BoardScope = "all" | "ready_now" | "running" | "needs_attention" | "draft";
 
 const VIEW_META: Record<View, { title: string; description: string }> = {
   board: {
@@ -105,6 +123,8 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [query, setQuery] = useState("");
+  const [activeFocusAreaId, setActiveFocusAreaId] = useState<string | null>(null);
+  const [boardScope, setBoardScope] = useState<BoardScope>("all");
   const [view, setView] = useState<View>("board");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("board");
   const [chatConversations, setChatConversations] = useState<AssistantChatConversation[]>([]);
@@ -228,27 +248,31 @@ export function App() {
     };
   }, [editingTask, tasks]);
 
-  const filteredTasks = useMemo(() => {
+  const searchAndFocusTasks = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const focusAreaById = new Map(
       (settings?.userProfile.focusAreas ?? []).map((area) => [area.id, area.label]),
     );
-    if (!needle) {
-      return tasks;
-    }
     return tasks.filter((task) =>
-      [
-        task.title,
-        task.description,
-        task.status,
-        task.priority,
-        task.focusAreaId ? focusAreaById.get(task.focusAreaId) ?? "" : "",
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(needle),
+      (activeFocusAreaId === null || task.focusAreaId === activeFocusAreaId) &&
+      (!needle ||
+        [
+          task.title,
+          task.description,
+          task.status,
+          task.priority,
+          task.focusAreaId ? focusAreaById.get(task.focusAreaId) ?? "" : "",
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(needle)),
     );
-  }, [settings, tasks, query]);
+  }, [activeFocusAreaId, settings, tasks, query]);
+
+  const filteredTasks = useMemo(
+    () => applyBoardScope(searchAndFocusTasks, boardScope),
+    [boardScope, searchAndFocusTasks],
+  );
 
   const counts = useMemo(
     () =>
@@ -260,6 +284,21 @@ export function App() {
       ) as Record<TaskStatus, number>,
     [tasks],
   );
+
+  const visibleCounts = useMemo(
+    () => countTasksByStatus(searchAndFocusTasks),
+    [searchAndFocusTasks],
+  );
+
+  const focusAreaCounts = useMemo(() => {
+    const next: Record<string, number> = {};
+    for (const task of tasks) {
+      if (task.focusAreaId) {
+        next[task.focusAreaId] = (next[task.focusAreaId] ?? 0) + 1;
+      }
+    }
+    return next;
+  }, [tasks]);
 
   async function createOrUpdateTask(input: TaskCreateInput) {
     if (editingTask) {
@@ -469,8 +508,15 @@ export function App() {
     }
   }
 
-  const readyNowCount = counts.ready + counts.in_progress;
-  const attentionCount = counts.needs_attention;
+  function clearBoardFilters() {
+    setQuery("");
+    setActiveFocusAreaId(null);
+    setBoardScope("all");
+  }
+
+  const runningCount = searchAndFocusTasks.filter(
+    (task) => task.execution?.status === "queued" || task.execution?.status === "running",
+  ).length;
   const activeView = VIEW_META[view];
   const activeDescription =
     workspaceMode === "chat"
@@ -480,6 +526,30 @@ export function App() {
     providerStatuses.find((provider) => provider.provider === "openai")?.configured,
   );
   const focusAreas: FocusArea[] = settings?.userProfile.focusAreas ?? [];
+  const activeFocusArea = activeFocusAreaId
+    ? focusAreas.find((area) => area.id === activeFocusAreaId) ?? null
+    : null;
+  const hasActiveBoardFilters =
+    query.trim().length > 0 || activeFocusAreaId !== null || boardScope !== "all";
+  const boardHeaderDescription = formatBoardStateLine({
+    activeFocusArea,
+    boardScope,
+    filteredCount: filteredTasks.length,
+    query,
+    runningCount,
+    visibleCounts,
+  });
+  const visibleStatuses = useMemo(
+    () => getVisibleStatuses(boardScope, filteredTasks),
+    [boardScope, filteredTasks],
+  );
+
+  useEffect(() => {
+    if (activeFocusAreaId && !focusAreas.some((area) => area.id === activeFocusAreaId)) {
+      setActiveFocusAreaId(null);
+    }
+  }, [activeFocusAreaId, focusAreas]);
+
   const activeConversation =
     chatConversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const createInitialTask =
@@ -507,15 +577,18 @@ export function App() {
           workspaceMode={workspaceMode}
           counts={counts}
           focusAreas={focusAreas}
+          focusAreaCounts={focusAreaCounts}
+          activeFocusAreaId={activeFocusAreaId}
           chatConversations={chatConversations}
           activeConversationId={activeConversationId}
           chatHistoryLoading={workspaceMode === "chat" && chatHistoryLoading}
           onViewChange={changeView}
           onWorkspaceModeChange={changeWorkspaceMode}
+          onFocusAreaChange={setActiveFocusAreaId}
           onChatConversationSelect={selectChatConversation}
           onNewChatConversation={() => void createChatConversation()}
         />
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background px-3 py-3 sm:px-4">
             <SidebarTrigger aria-label="Toggle navigation" title="Toggle navigation" />
             <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -530,7 +603,9 @@ export function App() {
                   </Badge>
                 </div>
                 <p className="hidden truncate text-sm text-muted-foreground xl:block">
-                  {activeDescription}
+                  {workspaceMode === "chat" || view === "settings"
+                    ? activeDescription
+                    : boardHeaderDescription}
                 </p>
               </div>
             </div>
@@ -543,12 +618,27 @@ export function App() {
                   <InputGroupInput
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search tasks"
+                    placeholder="Search title, description, focus, priority"
+                    aria-label="Search tasks"
                   />
-                  <InputGroupAddon align="inline-end">
-                    <Kbd>⌘K</Kbd>
-                  </InputGroupAddon>
+                  {query && (
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupButton
+                        size="icon-xs"
+                        aria-label="Clear search"
+                        onClick={() => setQuery("")}
+                      >
+                        <X />
+                      </InputGroupButton>
+                    </InputGroupAddon>
+                  )}
                 </InputGroup>
+                {hasActiveBoardFilters && (
+                  <Button variant="outline" size="sm" onClick={clearBoardFilters}>
+                    <Filter data-icon="inline-start" />
+                    <span className="hidden sm:inline">Clear filters</span>
+                  </Button>
+                )}
                 <Button size="sm" onClick={() => setCreatingStatus("draft")} aria-label="New task">
                   <Plus data-icon="inline-start" />
                   <span className="hidden sm:inline">New task</span>
@@ -566,8 +656,20 @@ export function App() {
                 <InputGroupInput
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search tasks"
+                  placeholder="Search title, description, focus, priority"
+                  aria-label="Search tasks"
                 />
+                {query && (
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupButton
+                      size="icon-xs"
+                      aria-label="Clear search"
+                      onClick={() => setQuery("")}
+                    >
+                      <X />
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                )}
               </InputGroup>
             )}
 
@@ -601,14 +703,17 @@ export function App() {
               </main>
             ) : (
               <main className="flex min-w-0 flex-col gap-5">
-                <section
-                  className="grid grid-cols-1 gap-2 sm:grid-cols-3"
-                  aria-label="Workspace summary"
-                >
-                  <SummaryCard label="Ready now" value={readyNowCount} detail="Ready or in progress" />
-                  <SummaryCard label="Needs attention" value={attentionCount} detail="Failed or blocked work" />
-                  <SummaryCard label="Draft ideas" value={counts.draft} detail="Waiting to refine" />
-                </section>
+                {view === "board" && (
+                  <BoardFocusStrip
+                    counts={visibleCounts}
+                    runningCount={runningCount}
+                    activeScope={boardScope}
+                    activeFocusAreaLabel={activeFocusArea?.label}
+                    onScopeChange={setBoardScope}
+                    onCreateTask={() => setCreatingStatus("draft")}
+                    onClearScope={() => setBoardScope("all")}
+                  />
+                )}
 
                 {error && (
                   <Alert variant="destructive">
@@ -635,6 +740,7 @@ export function App() {
                   <BoardView
                     tasks={filteredTasks}
                     focusAreas={focusAreas}
+                    visibleStatuses={visibleStatuses}
                     onCreateTask={setCreatingStatus}
                     onEditTask={openTaskEditor}
                     onMoveTask={moveTask}
@@ -731,10 +837,136 @@ function WorkspaceLoadingCard(props: { title: string }) {
   );
 }
 
-function SummaryCard(props: { label: string; value: number; detail: string }) {
+function BoardFocusStrip(props: {
+  counts: Record<TaskStatus, number>;
+  runningCount: number;
+  activeScope: BoardScope;
+  activeFocusAreaLabel?: string;
+  onScopeChange: (scope: BoardScope) => void;
+  onCreateTask: () => void;
+  onClearScope: () => void;
+}) {
+  const readyNowCount = props.counts.ready + props.counts.in_progress;
+  const activeWorkCount =
+    readyNowCount + props.runningCount + props.counts.needs_attention + props.counts.draft;
+
+  if (activeWorkCount === 0) {
+    return (
+      <Card size="sm" className="border-dashed bg-muted/25">
+        <CardHeader>
+          <CardTitle>
+            {props.activeFocusAreaLabel
+              ? `No active ${props.activeFocusAreaLabel} work`
+              : "No active work"}
+          </CardTitle>
+          <CardDescription>
+            {props.counts.done > 0
+              ? `${formatTaskCount(props.counts.done)} done. Capture a draft when something new appears.`
+              : "Capture a draft or create a ready task when something needs attention."}
+          </CardDescription>
+          <CardAction>
+            <div className="flex items-center gap-2">
+              {props.activeScope !== "all" && (
+                <Button size="sm" variant="ghost" onClick={props.onClearScope}>
+                  <X data-icon="inline-start" />
+                  Show all
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={props.onCreateTask}>
+                <Plus data-icon="inline-start" />
+                New task
+              </Button>
+            </div>
+          </CardAction>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  const metrics = ([
+    {
+      label: "Ready now",
+      value: readyNowCount,
+      detail: "Ready or in progress",
+      scope: "ready_now",
+    },
+    {
+      label: "Running",
+      value: props.runningCount,
+      detail: "Queued or running",
+      scope: "running",
+    },
+    {
+      label: "Needs attention",
+      value: props.counts.needs_attention,
+      detail: "Blocked or failed",
+      scope: "needs_attention",
+    },
+    {
+      label: "Draft ideas",
+      value: props.counts.draft,
+      detail: "Waiting to refine",
+      scope: "draft",
+    },
+  ] satisfies Array<{
+    label: string;
+    value: number;
+    detail: string;
+    scope: BoardScope;
+  }>).filter((metric) => metric.value > 0 || props.activeScope === metric.scope);
+
   return (
-    <Card size="sm" className="min-h-20">
-      <CardHeader>
+    <section className="flex flex-col gap-2" aria-label="Work focus">
+      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+        {metrics.map((metric) => (
+          <BoardMetricCard
+            key={metric.scope}
+            label={metric.label}
+            value={metric.value}
+            detail={metric.detail}
+            active={props.activeScope === metric.scope}
+            onActivate={() => props.onScopeChange(metric.scope)}
+          />
+        ))}
+      </div>
+      {props.activeScope !== "all" && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-fit"
+          onClick={props.onClearScope}
+        >
+          <X data-icon="inline-start" />
+          Show all columns
+        </Button>
+      )}
+    </section>
+  );
+}
+
+function BoardMetricCard(props: {
+  label: string;
+  value: number;
+  detail: string;
+  active: boolean;
+  onActivate: () => void;
+}) {
+  return (
+    <Card
+      size="sm"
+      role="button"
+      tabIndex={0}
+      aria-label={`${props.label}: ${props.value}. ${props.detail}`}
+      aria-pressed={props.active}
+      className={cn(
+        "min-h-16 cursor-pointer transition-colors hover:bg-accent/30 sm:min-h-20",
+        props.active && "bg-accent/30 ring-2 ring-ring/40",
+      )}
+      onClick={props.onActivate}
+      onKeyDown={(event) => activateOnKeyboard(event, props.onActivate)}
+    >
+      <CardHeader className="gap-0.5 sm:gap-1">
         <CardDescription className="truncate">{props.label}</CardDescription>
         <CardTitle>{props.value}</CardTitle>
         <CardDescription className="hidden sm:block">{props.detail}</CardDescription>
@@ -742,3 +974,97 @@ function SummaryCard(props: { label: string; value: number; detail: string }) {
     </Card>
   );
 }
+
+function activateOnKeyboard(event: KeyboardEvent<HTMLElement>, onActivate: () => void) {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    onActivate();
+  }
+}
+
+function applyBoardScope(tasks: Task[], scope: BoardScope): Task[] {
+  if (scope === "ready_now") {
+    return tasks.filter((task) => task.status === "ready" || task.status === "in_progress");
+  }
+  if (scope === "running") {
+    return tasks.filter(
+      (task) => task.execution?.status === "queued" || task.execution?.status === "running",
+    );
+  }
+  if (scope === "needs_attention") {
+    return tasks.filter((task) => task.status === "needs_attention");
+  }
+  if (scope === "draft") {
+    return tasks.filter((task) => task.status === "draft");
+  }
+  return tasks;
+}
+
+function countTasksByStatus(tasks: Task[]): Record<TaskStatus, number> {
+  return Object.fromEntries(
+    TASK_STATUSES.map((status) => [
+      status,
+      tasks.filter((task) => task.status === status).length,
+    ]),
+  ) as Record<TaskStatus, number>;
+}
+
+function getVisibleStatuses(scope: BoardScope, tasks: Task[]): TaskStatus[] {
+  if (scope === "ready_now") {
+    return ["ready", "in_progress"];
+  }
+  if (scope === "running") {
+    const statuses = TASK_STATUSES.filter((status) =>
+      tasks.some((task) => task.status === status),
+    );
+    return statuses.length > 0 ? statuses : ["in_progress"];
+  }
+  if (scope === "needs_attention") {
+    return ["needs_attention"];
+  }
+  if (scope === "draft") {
+    return ["draft"];
+  }
+  return [...TASK_STATUSES];
+}
+
+function formatBoardStateLine(input: {
+  activeFocusArea: FocusArea | null;
+  boardScope: BoardScope;
+  filteredCount: number;
+  query: string;
+  runningCount: number;
+  visibleCounts: Record<TaskStatus, number>;
+}): string {
+  if (input.boardScope !== "all") {
+    return `${BOARD_SCOPE_LABELS[input.boardScope]} - ${formatTaskCount(input.filteredCount)}`;
+  }
+  if (input.query.trim()) {
+    return `Showing ${formatTaskCount(input.filteredCount)} for "${input.query.trim()}"`;
+  }
+  const focusPrefix = input.activeFocusArea ? `${input.activeFocusArea.label} - ` : "";
+  const readyNowCount = input.visibleCounts.ready + input.visibleCounts.in_progress;
+  if (
+    readyNowCount === 0 &&
+    input.visibleCounts.needs_attention === 0 &&
+    input.visibleCounts.draft === 0
+  ) {
+    return `${focusPrefix}${input.visibleCounts.done} done - no active work`;
+  }
+  return [
+    `${focusPrefix}${readyNowCount} ready now`,
+    `${input.runningCount} running`,
+    `${input.visibleCounts.needs_attention} needs attention`,
+  ].join(" - ");
+}
+
+function formatTaskCount(count: number): string {
+  return `${count} ${count === 1 ? "task" : "tasks"}`;
+}
+
+const BOARD_SCOPE_LABELS: Record<Exclude<BoardScope, "all">, string> = {
+  ready_now: "Ready now",
+  running: "Running",
+  needs_attention: "Needs attention",
+  draft: "Draft ideas",
+};

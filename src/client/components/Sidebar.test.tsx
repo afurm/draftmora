@@ -53,11 +53,14 @@ describe("Sidebar", () => {
               workspaceMode="chat"
               counts={counts()}
               focusAreas={focusAreas()}
+              focusAreaCounts={focusAreaCounts()}
+              activeFocusAreaId={null}
               chatConversations={chatConversations()}
               activeConversationId="conversation-1"
               chatHistoryLoading={false}
               onViewChange={onViewChange}
               onWorkspaceModeChange={onWorkspaceModeChange}
+              onFocusAreaChange={vi.fn()}
               onChatConversationSelect={onChatConversationSelect}
               onNewChatConversation={vi.fn()}
             />
@@ -114,11 +117,14 @@ describe("Sidebar", () => {
               workspaceMode="board"
               counts={counts()}
               focusAreas={focusAreas()}
+              focusAreaCounts={focusAreaCounts()}
+              activeFocusAreaId={null}
               chatConversations={chatConversations()}
               activeConversationId="conversation-1"
               chatHistoryLoading={false}
               onViewChange={onViewChange}
               onWorkspaceModeChange={onWorkspaceModeChange}
+              onFocusAreaChange={vi.fn()}
               onChatConversationSelect={vi.fn()}
               onNewChatConversation={vi.fn()}
             />
@@ -140,6 +146,47 @@ describe("Sidebar", () => {
     expect(onWorkspaceModeChange).toHaveBeenCalledWith("board");
     expect(onViewChange).toHaveBeenCalledWith("board");
   });
+
+  it("turns focus areas into clickable board filters with counts", async () => {
+    const onFocusAreaChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <SidebarProvider>
+            <Sidebar
+              activeView="board"
+              workspaceMode="board"
+              counts={counts()}
+              focusAreas={focusAreas()}
+              focusAreaCounts={focusAreaCounts()}
+              activeFocusAreaId="client-ops"
+              chatConversations={chatConversations()}
+              activeConversationId="conversation-1"
+              chatHistoryLoading={false}
+              onViewChange={vi.fn()}
+              onWorkspaceModeChange={vi.fn()}
+              onFocusAreaChange={onFocusAreaChange}
+              onChatConversationSelect={vi.fn()}
+              onNewChatConversation={vi.fn()}
+            />
+          </SidebarProvider>
+        </TooltipProvider>,
+      );
+    });
+
+    expect(container.textContent).toContain("Focus areas");
+    expect(container.textContent).toContain("All work");
+    expect(container.textContent).toContain("Client Ops");
+
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'))
+        .find((button) => button.textContent?.includes("All work"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onFocusAreaChange).toHaveBeenCalledWith(null);
+  });
 });
 
 function counts(): Record<TaskStatus, number> {
@@ -154,6 +201,10 @@ function counts(): Record<TaskStatus, number> {
 
 function focusAreas(): FocusArea[] {
   return [{ id: "client-ops", label: "Client Ops", color: "emerald" }];
+}
+
+function focusAreaCounts(): Record<string, number> {
+  return { "client-ops": 2 };
 }
 
 function chatConversations(): AssistantChatConversation[] {

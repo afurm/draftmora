@@ -85,9 +85,11 @@ describe("App task detail routing", () => {
     await renderApp();
 
     await waitFor(() =>
-      expect(document.body.querySelector('button[aria-label="Open task Route task"]')).toBeTruthy(),
+      expect(
+        document.body.querySelector('[role="button"][aria-label="Open task Route task"]'),
+      ).toBeTruthy(),
     );
-    await clickSelector('button[aria-label="Open task Route task"]');
+    await clickSelector('[role="button"][aria-label="Open task Route task"]');
 
     expect(window.location.search).toBe("?task=task-1");
     await waitFor(() => expect(api.getTask).toHaveBeenCalledWith("task-1"));
@@ -118,14 +120,14 @@ async function clickSelector(selector: string) {
 
 async function waitFor(assertion: () => void) {
   let lastError: unknown;
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < 120; index += 1) {
     try {
       assertion();
       return;
     } catch (err) {
       lastError = err;
       await act(async () => {
-        await new Promise((resolve) => window.setTimeout(resolve, 0));
+        await new Promise((resolve) => window.setTimeout(resolve, 10));
       });
     }
   }

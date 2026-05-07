@@ -11,6 +11,7 @@ import type {
   FocusArea,
   TaskStatus,
 } from "../../shared/types";
+import { Badge } from "@/components/ui/badge";
 import {
   Sidebar as ShadcnSidebar,
   SidebarContent,
@@ -38,11 +39,14 @@ export function Sidebar(props: {
   workspaceMode: WorkspaceMode;
   counts: Record<TaskStatus, number>;
   focusAreas: FocusArea[];
+  focusAreaCounts: Record<string, number>;
+  activeFocusAreaId: string | null;
   chatConversations: AssistantChatConversation[];
   activeConversationId: string | null;
   chatHistoryLoading: boolean;
   onViewChange: (view: View) => void;
   onWorkspaceModeChange: (mode: WorkspaceMode) => void;
+  onFocusAreaChange: (focusAreaId: string | null) => void;
   onChatConversationSelect: (conversationId: string) => void;
   onNewChatConversation: () => void;
 }) {
@@ -81,8 +85,18 @@ export function Sidebar(props: {
     }
   }
 
+  function selectFocusArea(focusAreaId: string | null) {
+    props.onFocusAreaChange(focusAreaId);
+    props.onWorkspaceModeChange("board");
+    props.onViewChange("board");
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  }
+
   const activeWorkspaceMode =
     props.workspaceMode === "chat" ? "chat" : props.activeView === "board" ? "board" : "";
+  const totalTaskCount = Object.values(props.counts).reduce((total, count) => total + count, 0);
 
   return (
     <ShadcnSidebar collapsible="icon" variant="inset">
@@ -153,7 +167,13 @@ export function Sidebar(props: {
             onNewConversation={createChatConversation}
           />
         ) : (
-          <FocusAreasGroup focusAreas={props.focusAreas} />
+          <FocusAreasGroup
+            focusAreas={props.focusAreas}
+            focusAreaCounts={props.focusAreaCounts}
+            totalTaskCount={totalTaskCount}
+            activeFocusAreaId={props.activeFocusAreaId}
+            onFocusAreaChange={selectFocusArea}
+          />
         )}
       </SidebarContent>
 
@@ -190,24 +210,47 @@ export function Sidebar(props: {
   );
 }
 
-function FocusAreasGroup(props: { focusAreas: FocusArea[] }) {
+function FocusAreasGroup(props: {
+  focusAreas: FocusArea[];
+  focusAreaCounts: Record<string, number>;
+  totalTaskCount: number;
+  activeFocusAreaId: string | null;
+  onFocusAreaChange: (focusAreaId: string | null) => void;
+}) {
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Focus areas</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              type="button"
+              isActive={props.activeFocusAreaId === null}
+              tooltip="All work"
+              onClick={() => props.onFocusAreaChange(null)}
+            >
+              <LayoutGrid />
+              <span>All work</span>
+              <Badge variant="secondary" className="ml-auto group-data-[collapsible=icon]:hidden">
+                {props.totalTaskCount}
+              </Badge>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           {props.focusAreas.map((area) => {
             const style = getFocusAreaStyle(area.color);
             return (
               <SidebarMenuItem key={area.id}>
                 <SidebarMenuButton
                   type="button"
-                  disabled
-                  className="disabled:opacity-100"
+                  isActive={props.activeFocusAreaId === area.id}
                   tooltip={area.label}
+                  onClick={() => props.onFocusAreaChange(area.id)}
                 >
                   <Circle style={{ color: style.accent, fill: style.background }} />
                   <span>{area.label}</span>
+                  <Badge variant="secondary" className="ml-auto group-data-[collapsible=icon]:hidden">
+                    {props.focusAreaCounts[area.id] ?? 0}
+                  </Badge>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             );

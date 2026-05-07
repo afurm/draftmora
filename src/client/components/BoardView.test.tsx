@@ -45,8 +45,8 @@ describe("BoardView", () => {
     });
 
     const renderedTaskTitles = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Open task "]'),
-    ).map((button) => button.getAttribute("aria-label")?.replace("Open task ", ""));
+      container.querySelectorAll<HTMLElement>('[role="button"][aria-label^="Open task "]'),
+    ).map((card) => card.getAttribute("aria-label")?.replace("Open task ", ""));
 
     expect(renderedTaskTitles).toEqual([
       "High priority task A",
@@ -70,8 +70,8 @@ describe("BoardView", () => {
       );
     });
 
-    const card = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Open task Running task"]',
+    const card = container.querySelector<HTMLElement>(
+      '[role="button"][aria-label="Open task Running task"]',
     );
 
     expect(card?.textContent).toContain("Running");

@@ -43,6 +43,7 @@ describe("Sidebar", () => {
     const onViewChange = vi.fn();
     const onWorkspaceModeChange = vi.fn();
     const onChatConversationSelect = vi.fn();
+    const onNewChatConversation = vi.fn();
 
     await act(async () => {
       root.render(
@@ -62,7 +63,7 @@ describe("Sidebar", () => {
               onWorkspaceModeChange={onWorkspaceModeChange}
               onFocusAreaChange={vi.fn()}
               onChatConversationSelect={onChatConversationSelect}
-              onNewChatConversation={vi.fn()}
+              onNewChatConversation={onNewChatConversation}
             />
           </SidebarProvider>
         </TooltipProvider>,
@@ -81,6 +82,7 @@ describe("Sidebar", () => {
     expect(container.textContent).toContain("This Mac");
     expect(container.textContent).not.toContain("Focus areas");
     expect(container.textContent).not.toContain("Client Ops");
+    expect(container.querySelector('button[aria-label="New chat"]')).not.toBeNull();
     expect(
       Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'))
         .some((button) => button.textContent?.trim() === "Board"),
@@ -94,6 +96,14 @@ describe("Sidebar", () => {
 
     expect(onWorkspaceModeChange).toHaveBeenCalledWith("board");
     expect(onViewChange).toHaveBeenCalledWith("board");
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="New chat"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onNewChatConversation).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'))
@@ -187,6 +197,60 @@ describe("Sidebar", () => {
 
     expect(onFocusAreaChange).toHaveBeenCalledWith(null);
   });
+
+  it("filters chat conversations without losing the active row", async () => {
+    const onChatConversationSelect = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <SidebarProvider>
+            <Sidebar
+              activeView="board"
+              workspaceMode="chat"
+              counts={counts()}
+              focusAreas={focusAreas()}
+              focusAreaCounts={focusAreaCounts()}
+              activeFocusAreaId={null}
+              chatConversations={manyChatConversations()}
+              activeConversationId="conversation-2"
+              chatHistoryLoading={false}
+              onViewChange={vi.fn()}
+              onWorkspaceModeChange={vi.fn()}
+              onFocusAreaChange={vi.fn()}
+              onChatConversationSelect={onChatConversationSelect}
+              onNewChatConversation={vi.fn()}
+            />
+          </SidebarProvider>
+        </TooltipProvider>,
+      );
+    });
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search conversations"]',
+    );
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      setInputValue(input!, "launch");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("Launch note");
+    expect(container.textContent).not.toContain("Plan my day");
+
+    const activeButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'),
+    ).find((button) => button.getAttribute("data-active") === "true");
+
+    expect(activeButton?.textContent).toContain("Launch note");
+
+    await act(async () => {
+      activeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onChatConversationSelect).toHaveBeenCalledWith("conversation-2");
+  });
 });
 
 function counts(): Record<TaskStatus, number> {
@@ -222,4 +286,39 @@ function chatConversations(): AssistantChatConversation[] {
       updatedAt: "2026-05-03T09:03:00.000Z",
     },
   ];
+}
+
+function manyChatConversations(): AssistantChatConversation[] {
+  return [
+    ...chatConversations(),
+    {
+      id: "conversation-3",
+      title: "Daily planning",
+      createdAt: "2026-05-03T09:04:00.000Z",
+      updatedAt: "2026-05-03T09:05:00.000Z",
+    },
+    {
+      id: "conversation-4",
+      title: "Roadmap cleanup",
+      createdAt: "2026-05-03T09:06:00.000Z",
+      updatedAt: "2026-05-03T09:07:00.000Z",
+    },
+    {
+      id: "conversation-5",
+      title: "Follow-up list",
+      createdAt: "2026-05-03T09:08:00.000Z",
+      updatedAt: "2026-05-03T09:09:00.000Z",
+    },
+    {
+      id: "conversation-6",
+      title: "Stuck work review",
+      createdAt: "2026-05-03T09:10:00.000Z",
+      updatedAt: "2026-05-03T09:11:00.000Z",
+    },
+  ];
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
 }

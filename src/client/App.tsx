@@ -597,10 +597,12 @@ export function App() {
                   <h1 className="truncate text-sm font-medium sm:text-base">
                     {workspaceMode === "chat" ? "Chat" : activeView.title}
                   </h1>
-                  <Badge variant="secondary" className="hidden sm:inline-flex">
-                    <Monitor data-icon="inline-start" />
-                    {openAiReady ? "OpenAI ready" : "Local board"}
-                  </Badge>
+                  {workspaceMode === "board" && (
+                    <Badge variant="secondary" className="hidden sm:inline-flex">
+                      <Monitor data-icon="inline-start" />
+                      {openAiReady ? "OpenAI ready" : "Local board"}
+                    </Badge>
+                  )}
                 </div>
                 <p className="hidden truncate text-sm text-muted-foreground xl:block">
                   {workspaceMode === "chat" || view === "settings"
@@ -697,7 +699,7 @@ export function App() {
                     onLoadHistory={loadAssistantChatHistory}
                     onAsk={askAssistant}
                     onMessagesChange={handleChatMessagesChange}
-                    className="min-h-[calc(100dvh-8rem)] lg:static lg:h-[calc(100dvh-8rem)] xl:h-[calc(100dvh-8.5rem)]"
+                    className="h-[calc(100dvh-5.5rem)] min-h-[32rem] lg:static lg:h-[calc(100dvh-8rem)] xl:h-[calc(100dvh-8.5rem)]"
                   />
                 </Suspense>
               </main>

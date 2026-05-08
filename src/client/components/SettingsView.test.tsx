@@ -53,7 +53,9 @@ afterEach(() => {
 
 describe("SettingsView", () => {
   it("saves focus area changes", async () => {
-    const onSave = vi.fn(async (_nextSettings: AppSettings) => undefined);
+    const onSave = vi.fn(
+      async (_nextSettings: AppSettings, _providerPatches: ProviderConfigPatch[]) => undefined,
+    );
 
     await act(async () => {
       root.render(
@@ -76,6 +78,8 @@ describe("SettingsView", () => {
         />,
       );
     });
+
+    await clickButtonByText("Board");
 
     expect(container.textContent).toContain("Board settings");
     expect(container.textContent).toContain("Focus areas");
@@ -101,9 +105,10 @@ describe("SettingsView", () => {
       label: "Clients",
       color: "blue",
     });
+    expect(onSave.mock.calls[0][1]).toEqual([]);
   });
 
-  it("labels settings select triggers for assistive technology", async () => {
+  it("labels settings controls for assistive technology", async () => {
     await act(async () => {
       root.render(
         <SettingsView
@@ -165,11 +170,16 @@ describe("SettingsView", () => {
       );
     });
 
-    expect(container.querySelector('button[aria-label="Authentication"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="Authentication method"]')).toBeTruthy();
+    expect(container.textContent).toContain("OpenAI account");
+    expect(container.textContent).toContain("API key");
     expect(container.querySelector('button[aria-label="Model"]')).toBeTruthy();
-    expect(container.querySelector('button[aria-label="Personal color"]')).toBeTruthy();
     expect(container.textContent).toContain("Connected as ...abc123.");
     expect(container.textContent).not.toContain("00000000-0000-0000");
+
+    await clickButtonByText("Board");
+
+    expect(container.querySelector('button[aria-label="Personal color"]')).toBeTruthy();
   });
 
   it("saves advanced OpenAI request settings", async () => {
@@ -208,28 +218,34 @@ describe("SettingsView", () => {
       );
     });
 
-    const maxTokensInput = container.querySelector<HTMLInputElement>("#openai-max-tokens");
-    const timeoutInput = container.querySelector<HTMLInputElement>("#openai-timeout");
     const orgInput = container.querySelector<HTMLInputElement>("#openai-organization");
     const projectInput = container.querySelector<HTMLInputElement>("#openai-project");
-    expect(maxTokensInput).toBeTruthy();
-    expect(timeoutInput).toBeTruthy();
     expect(orgInput).toBeTruthy();
     expect(projectInput).toBeTruthy();
 
     await act(async () => {
-      setInputValue(maxTokensInput!, "8192");
-      maxTokensInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      setInputValue(timeoutInput!, "90000");
-      timeoutInput!.dispatchEvent(new Event("input", { bubbles: true }));
       setInputValue(orgInput!, "org_saved");
       orgInput!.dispatchEvent(new Event("input", { bubbles: true }));
       setInputValue(projectInput!, "proj_saved");
       projectInput!.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
+    await clickButtonByText("Advanced");
+
+    const maxTokensInput = container.querySelector<HTMLInputElement>("#openai-max-tokens");
+    const timeoutInput = container.querySelector<HTMLInputElement>("#openai-timeout");
+    expect(maxTokensInput).toBeTruthy();
+    expect(timeoutInput).toBeTruthy();
+
+    await act(async () => {
+      setInputValue(maxTokensInput!, "8192");
+      maxTokensInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      setInputValue(timeoutInput!, "90000");
+      timeoutInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
     const saveButton = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Save OpenAI settings"),
+      button.textContent?.includes("Save advanced settings"),
     );
     await act(async () => {
       saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -245,7 +261,144 @@ describe("SettingsView", () => {
       projectId: "proj_saved",
     });
   });
+
+  it("blocks invalid advanced numeric values", async () => {
+    const onSave = vi.fn(
+      async (_nextSettings: AppSettings, _providerPatches: ProviderConfigPatch[]) => undefined,
+    );
+
+    await act(async () => {
+      root.render(
+        <SettingsView
+          settings={{
+            ...settings,
+            providerConfigs: [
+              {
+                ...settings.providerConfigs[0],
+                authMode: "api_key",
+              },
+            ],
+          }}
+          providerStatuses={[]}
+          onSave={onSave}
+          onStartOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAccountInfo={vi.fn(async () => ({
+            configured: false,
+            prefetchedAt: "2026-05-02T00:00:00.000Z",
+            recommendedModel: "gpt-5.5",
+            currentModel: "gpt-5.5",
+            currentModelSupported: true,
+            models: [],
+          }))}
+          onSubmitOpenAiAuthInput={vi.fn(async () => emptyAuthState)}
+          onLogoutOpenAiAuth={vi.fn(async () => emptyAuthState)}
+        />,
+      );
+    });
+
+    await clickButtonByText("Advanced");
+
+    const temperatureInput = container.querySelector<HTMLInputElement>("#openai-temperature");
+    expect(temperatureInput).toBeTruthy();
+
+    await act(async () => {
+      setInputValue(temperatureInput!, "3");
+      temperatureInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButtonByText("Save advanced settings");
+
+    expect(container.textContent).toContain("Temperature must be 2 or lower.");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("focuses a new focus area after adding it", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsView
+          settings={settings}
+          providerStatuses={[]}
+          onSave={vi.fn(async () => undefined)}
+          onStartOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAccountInfo={vi.fn(async () => ({
+            configured: false,
+            prefetchedAt: "2026-05-02T00:00:00.000Z",
+            recommendedModel: "gpt-5.5",
+            currentModel: "gpt-5.5",
+            currentModelSupported: true,
+            models: [],
+          }))}
+          onSubmitOpenAiAuthInput={vi.fn(async () => emptyAuthState)}
+          onLogoutOpenAiAuth={vi.fn(async () => emptyAuthState)}
+        />,
+      );
+    });
+
+    await clickButtonByText("Board");
+    await clickButtonByText("Add area");
+
+    const newAreaInput = container.querySelector<HTMLInputElement>('input[aria-label="New area name"]');
+    expect(newAreaInput).toBeTruthy();
+    expect(document.activeElement).toBe(newAreaInput);
+  });
+
+  it("blocks empty focus area names", async () => {
+    const onSave = vi.fn(
+      async (_nextSettings: AppSettings, _providerPatches: ProviderConfigPatch[]) => undefined,
+    );
+
+    await act(async () => {
+      root.render(
+        <SettingsView
+          settings={settings}
+          providerStatuses={[]}
+          onSave={onSave}
+          onStartOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAuth={vi.fn(async () => emptyAuthState)}
+          onGetOpenAiAccountInfo={vi.fn(async () => ({
+            configured: false,
+            prefetchedAt: "2026-05-02T00:00:00.000Z",
+            recommendedModel: "gpt-5.5",
+            currentModel: "gpt-5.5",
+            currentModelSupported: true,
+            models: [],
+          }))}
+          onSubmitOpenAiAuthInput={vi.fn(async () => emptyAuthState)}
+          onLogoutOpenAiAuth={vi.fn(async () => emptyAuthState)}
+        />,
+      );
+    });
+
+    await clickButtonByText("Board");
+
+    const nameInput = container.querySelector<HTMLInputElement>('input[aria-label="Personal name"]');
+    expect(nameInput).toBeTruthy();
+
+    await act(async () => {
+      setInputValue(nameInput!, "");
+      nameInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButtonByText("Save board settings");
+
+    expect(container.textContent).toContain("Enter a focus area name.");
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Focus area name"]')).toBeTruthy();
+    expect(onSave).not.toHaveBeenCalled();
+  });
 });
+
+async function clickButtonByText(text: string) {
+  const button = Array.from(container.querySelectorAll("button")).find((entry) =>
+    entry.textContent?.includes(text),
+  );
+  expect(button).toBeTruthy();
+  await act(async () => {
+    button!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    button!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    button!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    button!.click();
+  });
+}
 
 function setInputValue(input: HTMLInputElement, value: string): void {
   const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;

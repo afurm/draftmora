@@ -54,6 +54,24 @@ beforeEach(() => {
   vi.mocked(api.getTask).mockResolvedValue({ task: task({ title: "Detailed task" }) });
   vi.mocked(api.settings).mockResolvedValue(settings());
   vi.mocked(api.providerStatus).mockResolvedValue({ providers: [providerStatus()] });
+  vi.mocked(api.openAiAuth).mockResolvedValue({ configured: false, login: { phase: "idle" } });
+  vi.mocked(api.openAiAccountInfo).mockResolvedValue({
+    configured: false,
+    prefetchedAt: "2026-05-02T00:00:00.000Z",
+    recommendedModel: "gpt-5.5",
+    currentModel: "gpt-5.5",
+    currentModelSupported: true,
+    models: [],
+  });
+  vi.mocked(api.startOpenAiAuth).mockResolvedValue({ configured: false, login: { phase: "idle" } });
+  vi.mocked(api.submitOpenAiAuthInput).mockResolvedValue({
+    configured: false,
+    login: { phase: "idle" },
+  });
+  vi.mocked(api.logoutOpenAiAuth).mockResolvedValue({
+    configured: false,
+    login: { phase: "idle" },
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -104,6 +122,29 @@ describe("App task detail routing", () => {
   });
 });
 
+describe("App settings view", () => {
+  it("hides board actions and uses settings-specific copy", async () => {
+    await renderApp();
+
+    await waitFor(() =>
+      expect(
+        document.body.querySelector('[role="button"][aria-label="Open task Route task"]'),
+      ).toBeTruthy(),
+    );
+    await clickButtonByText("Settings");
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain(
+        "Connect OpenAI and manage local board preferences.",
+      );
+      expect(document.body.textContent).toContain("OpenAI connection");
+    });
+
+    expect(document.body.querySelector('[aria-label="Search tasks"]')).toBeNull();
+    expect(document.body.querySelector('button[aria-label="New task"]')).toBeNull();
+  });
+});
+
 async function renderApp() {
   await act(async () => {
     root.render(<App />);
@@ -115,6 +156,16 @@ async function clickSelector(selector: string) {
   expect(element).toBeTruthy();
   await act(async () => {
     element!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+async function clickButtonByText(text: string) {
+  const button = Array.from(document.body.querySelectorAll("button")).find((entry) =>
+    entry.textContent?.includes(text),
+  );
+  expect(button).toBeTruthy();
+  await act(async () => {
+    button!.click();
   });
 }
 

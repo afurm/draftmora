@@ -89,7 +89,7 @@ const VIEW_META: Record<View, { title: string; description: string }> = {
   },
   settings: {
     title: "Settings",
-    description: "Manage focus areas for your local board.",
+    description: "Connect OpenAI and manage local board preferences.",
   },
 };
 
@@ -543,6 +543,7 @@ export function App() {
     () => getVisibleStatuses(boardScope, filteredTasks),
     [boardScope, filteredTasks],
   );
+  const showBoardHeaderActions = workspaceMode === "board" && view === "board";
 
   useEffect(() => {
     if (activeFocusAreaId && !focusAreas.some((area) => area.id === activeFocusAreaId)) {
@@ -597,7 +598,7 @@ export function App() {
                   <h1 className="truncate text-sm font-medium sm:text-base">
                     {workspaceMode === "chat" ? "Chat" : activeView.title}
                   </h1>
-                  {workspaceMode === "board" && (
+                  {showBoardHeaderActions && (
                     <Badge variant="secondary" className="hidden sm:inline-flex">
                       <Monitor data-icon="inline-start" />
                       {openAiReady ? "OpenAI ready" : "Local board"}
@@ -611,7 +612,7 @@ export function App() {
                 </p>
               </div>
             </div>
-            {workspaceMode === "board" && (
+            {showBoardHeaderActions && (
               <>
                 <InputGroup className="hidden max-w-sm xl:flex">
                   <InputGroupAddon>
@@ -650,7 +651,7 @@ export function App() {
           </header>
 
           <div className="flex flex-1 flex-col gap-5 p-3 sm:p-4 xl:p-5">
-            {workspaceMode === "board" && (
+            {showBoardHeaderActions && (
               <InputGroup className="xl:hidden">
                 <InputGroupAddon>
                   <Search />

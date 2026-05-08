@@ -9,19 +9,34 @@
 ![OpenAI account auth](https://img.shields.io/badge/OpenAI-account%20auth-412991?logo=openai&logoColor=white)
 ![Local-first](https://img.shields.io/badge/local--first-yes-111111)
 
-![Draftmora app preview](https://raw.githubusercontent.com/afurm/draftmora/main/.github/assets/draftmora-preview.png)
+**Local-first AI agent board for builders who want AI help inside their real
+task workflow.**
 
-**Messy ideas in. Clear tasks out.**
+Run it locally in one command:
 
-Draftmora is a local-first AI agent board for people who want AI help inside
-their own task workflow, not another hosted project-management system. Capture
-rough notes, turn them into structured tasks, chat with the agent, and keep
-execution history next to the work.
+```bash
+npx draftmora
+```
 
-The app runs on your machine, stores board data in SQLite, and can use OpenAI
-through account auth or a local API key when a task needs execution help. With
-account auth, eligible OpenAI accounts can connect from Settings instead of
-pasting an API key.
+Draftmora turns messy notes into structured, status-aware tasks. Chat with the
+agent, approve proposed board changes before anything is applied, and keep
+SQLite-backed execution history next to the work.
+
+It is built for indie builders, maintainers, and operators who want AI planning
+without moving project data into another hosted project-management system.
+
+![Draftmora local app demo](https://raw.githubusercontent.com/afurm/draftmora/main/.github/assets/draftmora-demo.gif)
+
+Use Draftmora when you want to:
+
+- Capture rough project ideas before they disappear.
+- Ask an agent to break messy work into clear next tasks.
+- Approve suggested board changes explicitly.
+- Keep board data, task history, and memory files local.
+
+New contributors can start with
+[`good first issue`](https://github.com/afurm/draftmora/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22)
+tickets for CLI polish, setup notes, docs, and platform smoke checks.
 
 ## Why Draftmora
 

@@ -503,9 +503,7 @@ export function App() {
 
   function changeWorkspaceMode(nextMode: WorkspaceMode) {
     setWorkspaceMode(nextMode);
-    if (nextMode === "board") {
-      setView("board");
-    }
+    setView("board");
   }
 
   function clearBoardFilters() {

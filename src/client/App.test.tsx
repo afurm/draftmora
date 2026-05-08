@@ -54,6 +54,11 @@ beforeEach(() => {
   vi.mocked(api.getTask).mockResolvedValue({ task: task({ title: "Detailed task" }) });
   vi.mocked(api.settings).mockResolvedValue(settings());
   vi.mocked(api.providerStatus).mockResolvedValue({ providers: [providerStatus()] });
+  vi.mocked(api.assistantChatHistory).mockResolvedValue({
+    conversations: [],
+    activeConversationId: null,
+    messages: [],
+  });
   vi.mocked(api.openAiAuth).mockResolvedValue({ configured: false, login: { phase: "idle" } });
   vi.mocked(api.openAiAccountInfo).mockResolvedValue({
     configured: false,
@@ -142,6 +147,35 @@ describe("App settings view", () => {
 
     expect(document.body.querySelector('[aria-label="Search tasks"]')).toBeNull();
     expect(document.body.querySelector('button[aria-label="New task"]')).toBeNull();
+  });
+
+  it("lets the sidebar Chat toggle leave settings cleanly", async () => {
+    await renderApp();
+
+    await waitFor(() =>
+      expect(
+        document.body.querySelector('[role="button"][aria-label="Open task Route task"]'),
+      ).toBeTruthy(),
+    );
+    await clickButtonByText("Settings");
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("OpenAI connection");
+    });
+
+    await clickSelector('button[aria-label="Show chat"]');
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain(
+        "Talk with the agent. Each conversation keeps its own saved history.",
+      );
+      expect(document.body.textContent).toContain("Ask about priorities");
+      expect(document.body.textContent).not.toContain("OpenAI connection");
+    });
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button[aria-current="page"]'))
+        .some((button) => button.textContent?.includes("Settings")),
+    ).toBe(false);
   });
 });
 

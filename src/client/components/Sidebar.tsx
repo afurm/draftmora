@@ -13,6 +13,7 @@ import type {
   TaskStatus,
 } from "../../shared/types";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sidebar as ShadcnSidebar,
   SidebarContent,
@@ -33,6 +34,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { cn } from "@/lib/utils";
 import { getFocusAreaStyle } from "../focus-areas";
 
 type View = "board" | "settings";
@@ -57,7 +59,7 @@ export function Sidebar(props: {
 }) {
   const readyNowCount = props.counts.ready + props.counts.in_progress;
   const attentionCount = props.counts.needs_attention;
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, state } = useSidebar();
 
   function selectView(view: View) {
     props.onViewChange(view);
@@ -100,7 +102,18 @@ export function Sidebar(props: {
   }
 
   const activeWorkspaceMode =
-    props.workspaceMode === "chat" ? "chat" : props.activeView === "board" ? "board" : "";
+    props.activeView === "settings" ? "" : props.workspaceMode === "chat" ? "chat" : "board";
+  const settingsIsActive = props.activeView === "settings";
+  const collapsedIconMode = !isMobile && state === "collapsed";
+  const collapsedToggleItemStyle = collapsedIconMode
+    ? {
+        width: "32px",
+        height: "32px",
+        minWidth: "32px",
+        padding: 0,
+        borderRadius: "var(--radius-md)",
+      }
+    : undefined;
   const totalTaskCount = Object.values(props.counts).reduce((total, count) => total + count, 0);
 
   return (
@@ -139,14 +152,17 @@ export function Sidebar(props: {
           }}
           variant="outline"
           size="sm"
-          spacing={0}
-          className="w-full group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:flex-col"
+          spacing={collapsedIconMode ? 1 : 0}
+          orientation={collapsedIconMode ? "vertical" : "horizontal"}
+          className={cn("w-full", collapsedIconMode && "w-8 rounded-none")}
           aria-label="Task mode"
         >
           <ToggleGroupItem
             value="board"
             aria-label="Show board"
-            className="flex-1 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:min-w-8 group-data-[collapsible=icon]:px-0"
+            title="Board"
+            style={collapsedToggleItemStyle}
+            className={cn(collapsedIconMode ? "flex-none" : "flex-1")}
           >
             <LayoutGrid data-icon="inline-start" />
             <span className="group-data-[collapsible=icon]:hidden">Board</span>
@@ -154,7 +170,9 @@ export function Sidebar(props: {
           <ToggleGroupItem
             value="chat"
             aria-label="Show chat"
-            className="flex-1 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:min-w-8 group-data-[collapsible=icon]:px-0"
+            title="Chat"
+            style={collapsedToggleItemStyle}
+            className={cn(collapsedIconMode ? "flex-none" : "flex-1")}
           >
             <MessageSquareText data-icon="inline-start" />
             <span className="group-data-[collapsible=icon]:hidden">Chat</span>
@@ -178,6 +196,7 @@ export function Sidebar(props: {
             totalTaskCount={totalTaskCount}
             activeFocusAreaId={props.activeFocusAreaId}
             onFocusAreaChange={selectFocusArea}
+            onManageFocusAreas={() => selectView("settings")}
           />
         )}
       </SidebarContent>
@@ -187,8 +206,9 @@ export function Sidebar(props: {
           <SidebarMenuItem>
             <SidebarMenuButton
               type="button"
-              isActive={props.workspaceMode === "board" && props.activeView === "settings"}
+              isActive={settingsIsActive}
               tooltip="Settings"
+              aria-current={settingsIsActive ? "page" : undefined}
               onClick={() => selectView("settings")}
             >
               <Settings />
@@ -196,9 +216,14 @@ export function Sidebar(props: {
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton type="button" disabled className="h-auto items-start disabled:opacity-100">
+            <div
+              data-sidebar="local-status"
+              className="flex h-auto min-h-12 w-full items-start gap-2 rounded-md p-2 text-sm text-sidebar-foreground group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:min-h-8 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-2 [&_svg]:size-4 [&_svg]:shrink-0"
+              aria-label={`This Mac: ${readyNowCount} ready now, ${attentionCount} need attention`}
+              title={`This Mac: ${readyNowCount} ready now, ${attentionCount} need attention`}
+            >
               <Monitor />
-              <span className="grid gap-0.5">
+              <span className="grid gap-0.5 group-data-[collapsible=icon]:hidden">
                 <span>This Mac</span>
                 <span className="text-xs font-normal text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5">
@@ -206,7 +231,7 @@ export function Sidebar(props: {
                   </span>
                 </span>
               </span>
-            </SidebarMenuButton>
+            </div>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
@@ -221,46 +246,62 @@ function FocusAreasGroup(props: {
   totalTaskCount: number;
   activeFocusAreaId: string | null;
   onFocusAreaChange: (focusAreaId: string | null) => void;
+  onManageFocusAreas: () => void;
 }) {
+  const allWorkIsActive = props.activeFocusAreaId === null;
+
   return (
-    <SidebarGroup>
+    <SidebarGroup className="min-h-0 flex-1">
       <SidebarGroupLabel>Focus areas</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              type="button"
-              isActive={props.activeFocusAreaId === null}
-              tooltip="All work"
-              onClick={() => props.onFocusAreaChange(null)}
-            >
-              <LayoutGrid />
-              <span>All work</span>
-              <Badge variant="secondary" className="ml-auto group-data-[collapsible=icon]:hidden">
-                {props.totalTaskCount}
-              </Badge>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          {props.focusAreas.map((area) => {
-            const style = getFocusAreaStyle(area.color);
-            return (
-              <SidebarMenuItem key={area.id}>
-                <SidebarMenuButton
-                  type="button"
-                  isActive={props.activeFocusAreaId === area.id}
-                  tooltip={area.label}
-                  onClick={() => props.onFocusAreaChange(area.id)}
-                >
-                  <Circle style={{ color: style.accent, fill: style.background }} />
-                  <span>{area.label}</span>
-                  <Badge variant="secondary" className="ml-auto group-data-[collapsible=icon]:hidden">
-                    {props.focusAreaCounts[area.id] ?? 0}
-                  </Badge>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
+      <SidebarGroupAction
+        type="button"
+        aria-label="Edit focus areas"
+        title="Edit focus areas"
+        onClick={props.onManageFocusAreas}
+      >
+        <Settings />
+        <span className="sr-only">Edit focus areas</span>
+      </SidebarGroupAction>
+      <SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
+        <ScrollArea className="min-h-0 flex-1 pr-1 group-data-[collapsible=icon]:pr-0">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                isActive={allWorkIsActive}
+                tooltip="All work"
+                aria-pressed={allWorkIsActive}
+                aria-label={formatFocusAreaAriaLabel("All work", props.totalTaskCount)}
+                onClick={() => props.onFocusAreaChange(null)}
+              >
+                <LayoutGrid />
+                <span>All work</span>
+                <FocusAreaCountBadge count={props.totalTaskCount} />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            {props.focusAreas.map((area) => {
+              const style = getFocusAreaStyle(area.color);
+              const count = props.focusAreaCounts[area.id] ?? 0;
+              const isActive = props.activeFocusAreaId === area.id;
+              return (
+                <SidebarMenuItem key={area.id}>
+                  <SidebarMenuButton
+                    type="button"
+                    isActive={isActive}
+                    tooltip={area.label}
+                    aria-pressed={isActive}
+                    aria-label={formatFocusAreaAriaLabel(area.label, count)}
+                    onClick={() => props.onFocusAreaChange(area.id)}
+                  >
+                    <Circle style={{ color: style.accent, fill: style.background }} />
+                    <span>{area.label}</span>
+                    <FocusAreaCountBadge count={count} />
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        </ScrollArea>
       </SidebarGroupContent>
     </SidebarGroup>
   );
@@ -286,7 +327,7 @@ function ChatHistoryGroup(props: {
   }, [normalizedQuery, props.conversations, showSearch]);
 
   return (
-    <SidebarGroup>
+    <SidebarGroup className="min-h-0 flex-1">
       <SidebarGroupLabel>Conversations</SidebarGroupLabel>
       <SidebarGroupAction
         type="button"
@@ -297,7 +338,7 @@ function ChatHistoryGroup(props: {
         <Plus />
         <span className="sr-only">New chat</span>
       </SidebarGroupAction>
-      <SidebarGroupContent className="flex flex-col gap-2">
+      <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
         {showSearch && (
           <>
             <SidebarInput
@@ -310,78 +351,97 @@ function ChatHistoryGroup(props: {
             <SidebarSeparator className="group-data-[collapsible=icon]:hidden" />
           </>
         )}
-        <SidebarMenu>
-          {props.loading ? (
-            Array.from({ length: 4 }, (_, index) => (
-              <SidebarMenuItem key={index}>
-                <SidebarMenuSkeleton showIcon />
-              </SidebarMenuItem>
-            ))
-          ) : props.conversations.length === 0 ? (
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                type="button"
-                disabled
-                className="h-auto items-start disabled:opacity-100"
-                tooltip="No conversations yet"
-              >
-                <MessageSquareText />
-                <span className="grid gap-0.5">
-                  <span>No conversations</span>
-                  <span className="text-xs font-normal text-muted-foreground">
-                    Start a new chat.
-                  </span>
-                </span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ) : visibleConversations.length === 0 ? (
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                type="button"
-                disabled
-                className="h-auto items-start disabled:opacity-100"
-                tooltip="No matching conversations"
-              >
-                <MessageSquareText />
-                <span className="grid gap-0.5">
-                  <span>No matches</span>
-                  <span className="text-xs font-normal text-muted-foreground">
-                    Try another search.
-                  </span>
-                </span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ) : (
-            visibleConversations.map((conversation) => {
-              const isActive = conversation.id === props.activeConversationId;
-              return (
-                <SidebarMenuItem key={conversation.id}>
-                  <SidebarMenuButton
-                    type="button"
-                    isActive={isActive}
-                    className="h-auto min-h-11 items-start pr-14"
-                    tooltip={conversation.title}
-                    onClick={() => props.onConversationSelect(conversation.id)}
-                  >
-                    <MessageSquareText />
-                    <span className="grid min-w-0 gap-0.5">
-                      <span className="truncate">{conversation.title}</span>
-                      <span className="truncate text-xs font-normal text-muted-foreground">
-                        {formatConversationTime(conversation.updatedAt)}
-                      </span>
-                    </span>
-                  </SidebarMenuButton>
-                  <SidebarMenuBadge>
-                    {isActive ? "Open" : formatConversationBadge(conversation.updatedAt)}
-                  </SidebarMenuBadge>
+        <ScrollArea className="min-h-0 flex-1 pr-1 group-data-[collapsible=icon]:pr-0">
+          <SidebarMenu>
+            {props.loading ? (
+              Array.from({ length: 4 }, (_, index) => (
+                <SidebarMenuItem key={index}>
+                  <SidebarMenuSkeleton showIcon />
                 </SidebarMenuItem>
-              );
-            })
-          )}
-        </SidebarMenu>
+              ))
+            ) : props.conversations.length === 0 ? (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  type="button"
+                  disabled
+                  className="h-auto items-start disabled:opacity-100"
+                  tooltip="No conversations yet"
+                >
+                  <MessageSquareText />
+                  <span className="grid gap-0.5">
+                    <span>No conversations</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      Start a new chat.
+                    </span>
+                  </span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ) : visibleConversations.length === 0 ? (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  type="button"
+                  disabled
+                  className="h-auto items-start disabled:opacity-100"
+                  tooltip="No matching conversations"
+                >
+                  <MessageSquareText />
+                  <span className="grid gap-0.5">
+                    <span>No matches</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      Try another search.
+                    </span>
+                  </span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ) : (
+              visibleConversations.map((conversation) => {
+                const isActive = conversation.id === props.activeConversationId;
+                return (
+                  <SidebarMenuItem key={conversation.id}>
+                    <SidebarMenuButton
+                      type="button"
+                      isActive={isActive}
+                      className={cn("h-auto min-h-11 items-start", isActive && "pr-14")}
+                      tooltip={conversation.title}
+                      aria-current={isActive ? "page" : undefined}
+                      onClick={() => props.onConversationSelect(conversation.id)}
+                    >
+                      <MessageSquareText />
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className="truncate">{conversation.title}</span>
+                        <span className="truncate text-xs font-normal text-muted-foreground">
+                          {formatConversationTime(conversation.updatedAt)}
+                        </span>
+                      </span>
+                    </SidebarMenuButton>
+                    {isActive && <SidebarMenuBadge>Open</SidebarMenuBadge>}
+                  </SidebarMenuItem>
+                );
+              })
+            )}
+          </SidebarMenu>
+        </ScrollArea>
       </SidebarGroupContent>
     </SidebarGroup>
   );
+}
+
+function FocusAreaCountBadge(props: { count: number }) {
+  return (
+    <Badge
+      variant="secondary"
+      className={cn(
+        "ml-auto group-data-[collapsible=icon]:hidden",
+        props.count === 0 && "font-normal text-muted-foreground",
+      )}
+    >
+      {props.count}
+    </Badge>
+  );
+}
+
+function formatFocusAreaAriaLabel(label: string, count: number): string {
+  return `${label}, ${count} ${count === 1 ? "task" : "tasks"}`;
 }
 
 function formatConversationTime(value: string): string {
@@ -394,16 +454,5 @@ function formatConversationTime(value: string): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
-}
-
-function formatConversationBadge(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Saved";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
   }).format(date);
 }

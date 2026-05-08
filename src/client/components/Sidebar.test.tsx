@@ -83,10 +83,28 @@ describe("Sidebar", () => {
     expect(container.textContent).not.toContain("Focus areas");
     expect(container.textContent).not.toContain("Client Ops");
     expect(container.querySelector('button[aria-label="New chat"]')).not.toBeNull();
+    expect(container.querySelector('[data-slot="scroll-area"]')).not.toBeNull();
+    const localStatus = container.querySelector('[data-sidebar="local-status"]');
+    expect(localStatus).not.toBeNull();
+    expect(localStatus?.tagName).toBe("DIV");
+    expect(localStatus?.getAttribute("tabindex")).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button")).some((button) =>
+        button.textContent?.includes("This Mac"),
+      ),
+    ).toBe(false);
     expect(
       Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'))
         .some((button) => button.textContent?.trim() === "Board"),
     ).toBe(false);
+
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'))
+        .find((button) => button.textContent?.includes("Settings"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onViewChange).toHaveBeenCalledWith("settings");
 
     await act(async () => {
       container
@@ -148,6 +166,10 @@ describe("Sidebar", () => {
     );
 
     expect(boardToggle?.getAttribute("data-state")).toBe("off");
+    expect(
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-current="page"]'))
+        .find((button) => button.textContent?.includes("Settings")),
+    ).not.toBeUndefined();
 
     await act(async () => {
       boardToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -159,6 +181,7 @@ describe("Sidebar", () => {
 
   it("turns focus areas into clickable board filters with counts", async () => {
     const onFocusAreaChange = vi.fn();
+    const onViewChange = vi.fn();
 
     await act(async () => {
       root.render(
@@ -174,7 +197,7 @@ describe("Sidebar", () => {
               chatConversations={chatConversations()}
               activeConversationId="conversation-1"
               chatHistoryLoading={false}
-              onViewChange={vi.fn()}
+              onViewChange={onViewChange}
               onWorkspaceModeChange={vi.fn()}
               onFocusAreaChange={onFocusAreaChange}
               onChatConversationSelect={vi.fn()}
@@ -188,6 +211,28 @@ describe("Sidebar", () => {
     expect(container.textContent).toContain("Focus areas");
     expect(container.textContent).toContain("All work");
     expect(container.textContent).toContain("Client Ops");
+    expect(container.textContent).toContain("Ideas");
+    expect(container.querySelector('[data-slot="scroll-area"]')).not.toBeNull();
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="All work, 7 tasks"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("false");
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Client Ops, 2 tasks"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Ideas, 0 tasks"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("false");
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Edit focus areas"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onViewChange).toHaveBeenCalledWith("settings");
 
     await act(async () => {
       Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]'))
@@ -244,12 +289,58 @@ describe("Sidebar", () => {
     ).find((button) => button.getAttribute("data-active") === "true");
 
     expect(activeButton?.textContent).toContain("Launch note");
+    expect(activeButton?.getAttribute("aria-current")).toBe("page");
+    expect(container.querySelectorAll('[data-sidebar="menu-badge"]').length).toBe(1);
 
     await act(async () => {
       activeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(onChatConversationSelect).toHaveBeenCalledWith("conversation-2");
+  });
+
+  it("keeps long conversation lists scrollable while search stays above the list", async () => {
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <SidebarProvider>
+            <Sidebar
+              activeView="board"
+              workspaceMode="chat"
+              counts={counts()}
+              focusAreas={focusAreas()}
+              focusAreaCounts={focusAreaCounts()}
+              activeFocusAreaId={null}
+              chatConversations={twentyChatConversations()}
+              activeConversationId="conversation-20"
+              chatHistoryLoading={false}
+              onViewChange={vi.fn()}
+              onWorkspaceModeChange={vi.fn()}
+              onFocusAreaChange={vi.fn()}
+              onChatConversationSelect={vi.fn()}
+              onNewChatConversation={vi.fn()}
+            />
+          </SidebarProvider>
+        </TooltipProvider>,
+      );
+    });
+
+    const search = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search conversations"]',
+    );
+    const scrollArea = container.querySelector('[data-slot="scroll-area"]');
+    const activeButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-current="page"]',
+    );
+
+    expect(search).not.toBeNull();
+    expect(scrollArea).not.toBeNull();
+    expect(search?.compareDocumentPosition(scrollArea!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(container.textContent).toContain("Conversation 20");
+    expect(activeButton?.textContent).toContain("Conversation 20");
+    expect(container.querySelectorAll('[data-sidebar="menu-badge"]').length).toBe(1);
   });
 });
 
@@ -264,11 +355,14 @@ function counts(): Record<TaskStatus, number> {
 }
 
 function focusAreas(): FocusArea[] {
-  return [{ id: "client-ops", label: "Client Ops", color: "emerald" }];
+  return [
+    { id: "client-ops", label: "Client Ops", color: "emerald" },
+    { id: "ideas", label: "Ideas", color: "violet" },
+  ];
 }
 
 function focusAreaCounts(): Record<string, number> {
-  return { "client-ops": 2 };
+  return { "client-ops": 2, ideas: 0 };
 }
 
 function chatConversations(): AssistantChatConversation[] {
@@ -316,6 +410,18 @@ function manyChatConversations(): AssistantChatConversation[] {
       updatedAt: "2026-05-03T09:11:00.000Z",
     },
   ];
+}
+
+function twentyChatConversations(): AssistantChatConversation[] {
+  return Array.from({ length: 20 }, (_, index) => {
+    const value = index + 1;
+    return {
+      id: `conversation-${value}`,
+      title: `Conversation ${value}`,
+      createdAt: `2026-05-03T10:${String(index).padStart(2, "0")}:00.000Z`,
+      updatedAt: `2026-05-03T10:${String(index).padStart(2, "0")}:30.000Z`,
+    };
+  });
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {

@@ -2,7 +2,19 @@
 
 All notable changes to Draftmora are tracked here.
 
-## 0.1.1 - Unreleased
+## 0.1.2 - 2026-05-08
+
+### Changed
+
+- Redesigned the board workspace for denser task scanning and mobile-friendly
+  navigation.
+- Reworked the chat workspace with clearer thread controls and responsive
+  layout behavior.
+- Improved the settings experience for account state, advanced OpenAI controls,
+  and focused save flows.
+- Refined sidebar navigation, collapsed states, and route-aware labels.
+
+## 0.1.1 - 2026-05-06
 
 ### Added
 

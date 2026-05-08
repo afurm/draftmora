@@ -1,6 +1,6 @@
 {
   "name": "draftmora",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local-first AI agent board with chat, SQLite storage, and OpenAI account auth.",
   "private": false,
   "license": "MIT",
